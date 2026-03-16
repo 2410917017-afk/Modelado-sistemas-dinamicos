@@ -1,80 +1,98 @@
-#include <MeanFilterLib.h>
+/*
+ * Código para adquisición de datos (DAQ) de un motor DC.
+ * Mide corriente y velocidad usando un sensor ACS712 y encoder incremental.
+ * Envía datos filtrados por serial para análisis en Python.
+ */
+
+#include <MeanFilterLib.h>  // Librería para filtrado de media móvil
 
 
-const int corrientePin = 5;
-const int encoderPinA = 3;
-const int encoderPinB = 2;
-const int motorPin = 4;
+// Definición de pines
+const int corrientePin = 5;  // Pin analógico para el sensor de corriente ACS712
+const int encoderPinA = 3;   // Pin digital A del encoder incremental
+const int encoderPinB = 2;   // Pin digital B del encoder incremental
+const int motorPin = 4;      // Pin de salida para controlar el motor (PWM o señal)
 
-const int PULSOS_POR_VUELTA = 600; // Cambia según tu encoder
-volatile long contadorPulsos = 0;
-unsigned long tiempoAnterior = 0;
-float velocidadRPM = 0;
-float velRadianes = 0;
+// Constantes del encoder
+const int PULSOS_POR_VUELTA = 600;  // Número de pulsos por vuelta del encoder (ajustar según modelo)
 
-const int ADC_OFFSET = 1921; // Tu offset de cero Amperios
-const float SENSITIVIDAD = 0.0347; // TU sensibilidad calculada experimentalmente (V/A)
+// Variables para el encoder y velocidad
+volatile long contadorPulsos = 0;  // Contador de pulsos (volatile para interrupciones)
+unsigned long tiempoAnterior = 0;  // Tiempo del último cálculo de velocidad (ms)
+float velocidadRPM = 0;            // Velocidad en revoluciones por minuto
+float velRadianes = 0;             // Velocidad en radianes por segundo
 
-const float VOLTAJE_REFERENCIA = 3.3;
-const int RESOLUCION_ADC = 4095;
+// Constantes del sensor de corriente ACS712
+const int ADC_OFFSET = 1921;       // Offset del ADC para cero amperios (calibrado)
+const float SENSITIVIDAD = 0.0347; // Sensibilidad del sensor (V/A, experimental)
+const float VOLTAJE_REFERENCIA = 3.3;  // Voltaje de referencia del ADC
+const int RESOLUCION_ADC = 4095;       // Resolución del ADC (12 bits)
 
+// Filtro de media móvil para la corriente
+MeanFilter<float> filtro(3);  // Filtro con ventana de 3 muestras
 
-MeanFilter<float> filtro(3);
-
+// Interrupción para el encoder: se activa en flanco ascendente de pin A
+// Determina dirección basada en el estado de pin B
 void IRAM_ATTR encoderISR() {
   int estadoB = digitalRead(encoderPinB);
   if (estadoB == HIGH) {
-    contadorPulsos++;
+    contadorPulsos++;  // Dirección positiva
   } else {
-    contadorPulsos--;
+    contadorPulsos--;  // Dirección negativa
   }
 }
 
+// Función para leer la corriente instantánea del sensor ACS712
+// Convierte la lectura ADC a amperios
 float leerCorrienteInstantanea() {
-    int valorADC = analogRead(corrientePin);
-    float voltaje = ((float)valorADC - ADC_OFFSET) * VOLTAJE_REFERENCIA / RESOLUCION_ADC;
-    return voltaje / SENSITIVIDAD;
+    int valorADC = analogRead(corrientePin);  // Leer valor del ADC
+    float voltaje = ((float)valorADC - ADC_OFFSET) * VOLTAJE_REFERENCIA / RESOLUCION_ADC;  // Convertir a voltaje
+    return voltaje / SENSITIVIDAD;  // Convertir a corriente (A)
 }
 
 void setup(){
-    Serial.begin(115200);
+    Serial.begin(115200);  // Iniciar comunicación serial a 115200 baudios
 
-    pinMode(encoderPinA, INPUT_PULLUP);
-    pinMode(encoderPinB, INPUT_PULLUP);
-    pinMode(corrientePin, INPUT);
-    pinMode(motorPin, OUTPUT);
+    // Configurar pines
+    pinMode(encoderPinA, INPUT_PULLUP);  // Pin A del encoder como entrada con pull-up
+    pinMode(encoderPinB, INPUT_PULLUP);  // Pin B del encoder como entrada con pull-up
+    pinMode(corrientePin, INPUT);        // Pin de corriente como entrada analógica
+    pinMode(motorPin, OUTPUT);           // Pin del motor como salida
 
+    // Configurar interrupción para el encoder
     attachInterrupt(digitalPinToInterrupt(encoderPinA), encoderISR, RISING);
-
 }
 
 
 
 void loop(){
-    unsigned long tActual = millis();
+    unsigned long tActual = millis();  // Obtener tiempo actual en ms
 
-    float corrienteActual = leerCorrienteInstantanea();
+    float corrienteActual = leerCorrienteInstantanea();  // Leer corriente actual
 
+    // Calcular velocidad cada 100 ms
     if (tActual - tiempoAnterior >= 100) {
-        noInterrupts();
+        noInterrupts();  // Deshabilitar interrupciones para leer contador de forma segura
         long pulsos = contadorPulsos;
-        contadorPulsos = 0;
-        interrupts();
+        contadorPulsos = 0;  // Reiniciar contador
+        interrupts();  // Rehabilitar interrupciones
 
-        // Velocidad en RPM
+        // Calcular velocidad en RPM
         velocidadRPM = (pulsos * (60000.0 / (tActual - tiempoAnterior))) / PULSOS_POR_VUELTA;
-        velRadianes = (velocidadRPM * 6.2832) / 60;
+        velRadianes = (velocidadRPM * 6.2832) / 60;  // Convertir a rad/s (2*pi/60)
 
-        tiempoAnterior = tActual;
+        tiempoAnterior = tActual;  // Actualizar tiempo anterior
     }
 
+    // Aplicar filtro de media móvil a la corriente
     float iFiltrada = filtro.AddValue(corrienteActual);
 
+    // Enviar datos por serial: corriente filtrada, velocidad en rad/s
     Serial.print(iFiltrada);
     Serial.print(",");
     Serial.println(velRadianes);
-
 }
 
-//Calibración de sensor de corriente
-//https://github.com/KevinAntezana/ESP32-ACS712
+// Notas de calibración del sensor de corriente ACS712
+// Ajusta ADC_OFFSET y SENSITIVIDAD según tu calibración experimental
+// Referencia: https://github.com/KevinAntezana/ESP32-ACS712
