@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 
 # Configuración del puerto serial para comunicación con Arduino
 PuertoSerial = ''  # Ejemplo: 'COM3' 
-Baudrate = ''      # Velocidad de comunicación, ej: 9600, 115200
+Baudrate = '115200'      # Velocidad de comunicación, ej: 9600, 115200
 
 # Variables globales para almacenar datos experimentales
 t_data = []  # Lista de tiempos (timestamps)
