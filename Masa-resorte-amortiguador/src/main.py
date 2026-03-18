@@ -4,7 +4,7 @@ import time
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 
-# --------------------------------------------------
+# -----------------------------------------------
 # parámetros del modelo masa‑resorte‑amortiguador
 # --------------------------------------------------
 m = 0.1739      # masa (kg)
