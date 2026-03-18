@@ -13,6 +13,7 @@ b = 1.5  # fricción (N·s/m)
 
 x0 = -0.01    # desplazamiento inicial (m)
 v0 = 0.0        # velocidad inicial (m/s)
+t_comienzo = 0
 
 t_inicio = 0
 t_fin = 5.0
@@ -27,12 +28,6 @@ def sistema(t, y):
     dvdt = -(b / m) * y[1] - (k / m) * y[0]
     return [dxdt, dvdt]
 
-# cálculo del modelo (no depende de la cámara)
-t_eval = np.linspace(t_inicio, t_fin, num_puntos)
-sol = solve_ivp(sistema, [t_inicio, t_fin], [x0, v0], t_eval=t_eval)
-
-if not sol.success:
-    raise RuntimeError("Error en la integración numérica.")
 
 # --------------------------------------------------
 # procesamiento de vídeo
@@ -95,6 +90,8 @@ cv.destroyAllWindows()
 # análisis de los datos recogidos
 # --------------------------------------------------
 
+
+
 if len(t_vec) >= 2:
     t_vec = np.array(t_vec)
     x_vec = np.array(x_vec)
@@ -104,18 +101,72 @@ if len(t_vec) >= 2:
     x_exp = x_exp - np.mean(x_exp[:10])          # anular la deriva inicial
     t_exp = t_vec
 
+    for i in t_exp:
+    if i!=0:
+        t_comienzo = i
+        break
+
+
     # velocidad inicial experimental
     v0 = (x_exp[1] - x_exp[0]) / (t_exp[1] - t_exp[0])
     y0 = [x_exp[0], v0]
 
+    # cálculo del modelo (no depende de la cámara)
+    t_eval = np.linspace(t_comienzo, t_fin, num_puntos)
+    sol = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'LSODA', t_eval=t_eval) # Metodo mixto
 
-    plt.figure()
-    plt.plot(t_exp-1.3, x_exp, label="Experimental")   # Grafica los datos de la camara
-    plt.plot(sol.t, sol.y[0], label="Modelo")      # Grafica datos del modelo
-    plt.xlabel("Tiempo (s)")
-    plt.ylabel("Posición (m)")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+    sol1 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'RK45', t_eval = t_eval ) # ode45
+
+    sol2 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'RK23', t_eval = t_eval ) # ode23
+
+    sol3 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'BDF', t_eval = t_eval ) # ode 23s
+
+    sol4 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'Radau', t_eval = t_eval ) # ode15s
+
+    if not sol.success:
+        raise RuntimeError("Error en la integración numérica.")
+
+
+    # Crear figura con 2 filas y 2 columnas, compartiendo ejes X
+    fig, axes = plt.subplots(2, 3, figsize=(8, 6), sharex=True)
+
+    # Graficar en cada subplot
+    axes[0, 0].plot(t_exp, x_exp, 'blue')
+    axes[0, 0].set_title("Datos experimentales")
+    axes[0, 0].xlabel("Tiempo")
+    axes[0, 0].ylabel("Posicion")
+    axes[0, 0].grid()
+
+    axes[0, 1].plot(t_exp, sol.y[0], 'green')
+    axes[0, 1].set_title("Metodo mixto")
+    axes[0, 1].xlabel("Tiempo")
+    axes[0, 1].ylabel("Posicion")
+    axes[0, 1].grid()
+
+    axes[0, 2].plot(t_exp, sol1.y[0], 'red')
+    axes[0, 2].set_title("ode45")
+    axes[0, 2].xlabel("Tiempo")
+    axes[0, 2].ylabel("Posicion")
+    axes[0, 2].grid()
+
+    axes[1, 0].plot(t_exp, sol2.y[0], 'yellow')
+    axes[1, 0].set_title("ode23")
+    axes[1, 0].xlabel("Tiempo")
+    axes[1, 0].ylabel("Posicion")
+    axes[1, 0].grid()
+
+    axes[1, 1].plot(t_exp, sol3.y[0], 'cyan')
+    axes[1, 1].set_title("ode23s")
+    axes[1, 1].xlabel("Tiempo")
+    axes[1, 1].ylabel("Posicion")
+    axes[1, 1].grid()
+
+    axes[1, 2].plot(t_exp, sol4.y[0], 'magenta')
+    axes[1, 2].set_title("ode15s")
+    axes[1, 2].xlabel("Tiempo")
+    axes[1, 2].ylabel("Posicion")
+    axes[1, 2].grid()
+
+
 else:
     print('No se detectaron suficientes datos')
