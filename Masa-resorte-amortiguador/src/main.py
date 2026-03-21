@@ -102,14 +102,10 @@ if len(t_vec) >= 2:
     t_exp = t_vec
 
     for i in t_exp:
-    if i!=0:
-        t_comienzo = i
-        break
+        if i!=0:
+            t_comienzo = i
+            break
 
-
-    # velocidad inicial experimental
-    v0 = (x_exp[1] - x_exp[0]) / (t_exp[1] - t_exp[0])
-    y0 = [x_exp[0], v0]
 
     # cálculo del modelo (no depende de la cámara)
     t_eval = np.linspace(t_comienzo, t_fin, num_puntos)
