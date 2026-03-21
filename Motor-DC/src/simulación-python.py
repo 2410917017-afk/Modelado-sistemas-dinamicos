@@ -70,7 +70,7 @@ def simulate_dc_motor_model(params, V, t_experimental):
     - i_sim: Corriente simulada (array)
     - w_sim: Velocidad simulada (array)
     """
-    from scipy.integrate import odeint
+    from scipy.integrate import solve_ivp
 
     # Extraer parámetros del diccionario para facilitar el acceso
     R_a = params["R_a (Ohm)"]        # Resistencia del armadura
@@ -106,7 +106,11 @@ def simulate_dc_motor_model(params, V, t_experimental):
 
     # Resolver el sistema de ODEs usando integración numérica
     # args=(V,) pasa el voltaje como parámetro adicional a motor_ode
-    solution = odeint(motor_ode, y0, t_experimental, args=(V,))
+    solution = solve_ivp(, y0, t_experimental, args=(V,))
+
+
+    sol = solve_ivp(motor_ode, [t_comienzo, t_fin], [x0, v0], method = 'LSODA', t_eval=t_eval) # Metodo mixto
+
 
     # Extraer resultados de la solución
     i_sim = solution[:, 0]  # Corriente simulada
@@ -201,6 +205,7 @@ try:
 
             # Esperar 2 segundos para que se estabilice la conexión
             time.sleep(2)
+            t_inicio = time.time()
 
             # Bucle de adquisición de datos en tiempo real
             while True:
@@ -244,7 +249,7 @@ try:
 except KeyboardInterrupt:
     print("Finalizado :)")
     arduino.close()
-
+    t_final = time.time()
     # =========================================================================
     # PROCESAMIENTO FINAL DE DATOS
     # =========================================================================
@@ -265,9 +270,10 @@ except KeyboardInterrupt:
     # =========================================================================
     # SIMULACIÓN Y COMPARACIÓN VISUAL
     # =========================================================================
+    t_eval = np.linspace(t_comienzo, t_fin, 500)
 
     # Simular el comportamiento del motor con los parámetros estimados
-    i_sim, w_sim = simulate_dc_motor_model(params, V, t_data)
+    i_sim, w_sim = simulate_dc_motor_model(params, V, t_eval)
 
     # Cambiar a modo no interactivo para la visualización final
     plt.ioff()
