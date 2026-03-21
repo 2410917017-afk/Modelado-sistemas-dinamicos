@@ -9,7 +9,7 @@
 
 // Definición de pines
 const int corrientePin = 5;  // Pin analógico para el sensor de corriente ACS712
-const int encoderPinA = 3;   // Pin digital A del encoder incremental
+const int encoderPinA = 4;   // Pin digital A del encoder incremental
 const int encoderPinB = 2;   // Pin digital B del encoder incremental
 const int motorPin = 4;      // Pin de salida para controlar el motor (PWM o señal)
 
