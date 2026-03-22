@@ -8,16 +8,16 @@ from scipy.integrate import solve_ivp
 # parámetros del modelo masa‑resorte‑amortiguador
 # --------------------------------------------------
 m = 0.1739      # masa (kg)
-k = 75000       # constante del resorte (N/m)
-b = 1.5  # fricción (N·s/m)
+k = 750       # constante del resorte (N/m)
+b = 2.5  # fricción (N·s/m)
 
 x0 = -0.01    # desplazamiento inicial (m)
 v0 = 0.0        # velocidad inicial (m/s)
 t_comienzo = 0
 
 t_inicio = 0
-t_fin = 5.0
-num_puntos = 100
+t_fin = 2.0
+num_puntos = 500
 
 def sistema(t, y):
     """
@@ -109,7 +109,6 @@ if len(t_vec) >= 2:
 
     # cálculo del modelo (no depende de la cámara)
     t_eval = np.linspace(t_comienzo, t_fin, num_puntos)
-    sol = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'LSODA', t_eval=t_eval) # Metodo mixto
 
     sol1 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'RK45', t_eval = t_eval ) # ode45
 
@@ -119,49 +118,42 @@ if len(t_vec) >= 2:
 
     sol4 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'Radau', t_eval = t_eval ) # ode15s
 
-    if not sol.success:
-        raise RuntimeError("Error en la integración numérica.")
+    if not (sol1.success and sol2.success and sol3.success and sol4.success):
+        raise RuntimeError("Error en una o más integraciones numéricas.")
 
 
     # Crear figura con 2 filas y 2 columnas, compartiendo ejes X
-    fig, axes = plt.subplots(2, 3, figsize=(8, 6), sharex=True)
+    fig, axes = plt.subplots(2, 2, figsize=(8, 6), sharex=True)
 
     # Graficar en cada subplot
+
     axes[0, 0].plot(t_exp, x_exp, 'blue')
-    axes[0, 0].set_title("Datos experimentales")
+    axes[0, 0].plot(t_exp, sol1.y[0], 'red')
+    axes[0, 0].set_title("ode45")
     axes[0, 0].xlabel("Tiempo")
     axes[0, 0].ylabel("Posicion")
     axes[0, 0].grid()
 
-    axes[0, 1].plot(t_exp, sol.y[0], 'green')
-    axes[0, 1].set_title("Metodo mixto")
+    axes[0, 1].plot(t_exp, x_exp, 'blue')
+    axes[0, 1].plot(t_exp, sol2.y[0], 'yellow')
+    axes[0, 1].set_title("ode23")
     axes[0, 1].xlabel("Tiempo")
     axes[0, 1].ylabel("Posicion")
     axes[0, 1].grid()
 
-    axes[0, 2].plot(t_exp, sol1.y[0], 'red')
-    axes[0, 2].set_title("ode45")
-    axes[0, 2].xlabel("Tiempo")
-    axes[0, 2].ylabel("Posicion")
-    axes[0, 2].grid()
-
-    axes[1, 0].plot(t_exp, sol2.y[0], 'yellow')
-    axes[1, 0].set_title("ode23")
+    axes[1, 0].plot(t_exp, x_exp, 'blue')
+    axes[1, 0].plot(t_exp, sol3.y[0], 'cyan')
+    axes[1, 0].set_title("ode23s")
     axes[1, 0].xlabel("Tiempo")
     axes[1, 0].ylabel("Posicion")
     axes[1, 0].grid()
 
-    axes[1, 1].plot(t_exp, sol3.y[0], 'cyan')
-    axes[1, 1].set_title("ode23s")
+    axes[1, 1].plot(t_exp, x_exp, 'blue')
+    axes[1, 1].plot(t_exp, sol4.y[0], 'magenta')
+    axes[1, 1].set_title("ode15s")
     axes[1, 1].xlabel("Tiempo")
     axes[1, 1].ylabel("Posicion")
     axes[1, 1].grid()
-
-    axes[1, 2].plot(t_exp, sol4.y[0], 'magenta')
-    axes[1, 2].set_title("ode15s")
-    axes[1, 2].xlabel("Tiempo")
-    axes[1, 2].ylabel("Posicion")
-    axes[1, 2].grid()
 
 
 else:
