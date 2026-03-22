@@ -1,13 +1,6 @@
 """
 Simulación y Estimación de Parámetros de Motor DC
 ===============================================
-
-Este programa realiza:
-1. Adquisición de datos en tiempo real desde Arduino (corriente y velocidad)
-2. Estimación de parámetros del motor DC usando mínimos cuadrados
-3. Simulación del modelo dinámico con los parámetros estimados
-4. Comparación visual entre datos experimentales y simulación
-
 """
 
 import serial
@@ -15,7 +8,6 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
-
 
 # =============================================================================
 # CONFIGURACIÓN DEL SISTEMA
@@ -46,11 +38,11 @@ t_inicio = 0  # Variable global para almacenar el tiempo inicial
 plt.ion()
 
 # Crear figura con dos subgráficas (2 filas, 1 columna)
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
+fig_rt, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
 
 # Crear líneas iniciales vacías para las gráficas en tiempo real
-line1, = ax1.plot([], [], 'b-', label="Corriente")  # Línea azul para corriente
-line2, = ax2.plot([], [], 'r-', label="Velocidad")  # Línea roja para velocidad
+line1, = ax1.plot([], [], 'b-', label="Corriente")  
+line2, = ax2.plot([], [], 'r-', label="Velocidad")  
 
 # Configurar leyendas y rejillas
 ax1.legend()
@@ -62,156 +54,63 @@ ax2.grid(True)
 # FUNCIONES DE MODELADO Y SIMULACIÓN
 # =============================================================================
 
-def simulate_dc_motor_model(params, V, t_experimental):
+def simulate_dc_motor_model(params, V_arr, t_arr):
     """
     Simula el modelo dinámico del motor DC usando los parámetros estimados.
-    Retorna i_sim y w_sim sobre el mismo vector de tiempo experimental.
-
-    Parámetros:
-    - params: Diccionario con parámetros estimados del motor
-    - V: Voltaje aplicado (constante)
-    - t_experimental: Vector de tiempo experimental
-
-    Retorna:
-    - i_sim: Corriente simulada (array)
-    - w_sim: Velocidad simulada (array)
     """
+    R_a = params["R_a (Ohm)"]        
+    L_a = params["L_a (H)"]          
+    Ke = params["K_e (V·s/rad)"]     
+    Jm = params["J (kg·m²)"]          
+    B = params["B (N·m·s/rad)"]      
 
-    # Extraer parámetros del diccionario para facilitar el acceso
-    R_a = params["R_a (Ohm)"]        # Resistencia del armadura
-    L_a = params["L_a (H)"]          # Inductancia del armadura
-    Ke = params["K_e (V·s/rad)"]    # Constante de fuerza contraelectromotriz     # Constante de torque
-    Jm = params["J (kg·m²)"]          # Momento de inercia del rotor
-    B = params["B (N·m·s/rad)"]      # Coeficiente de fricción viscosa
-
-    # Protección contra inductancia muy pequeña (evita división por cero)
     if abs(L_a) < 1e-6:
         L_a = 1e-6
 
-    # Definir el sistema de ecuaciones diferenciales ordinarias (ODEs)
-    # Estado del sistema: y = [i, w] donde i=corriente, w=velocidad angular
-    def motor_dc(t, x, V, R, K, L, b, J):
-        """
-        Modelo de motor DC en espacio de estados.
-        x[0] = corriente (i)
-        x[1] = velocidad angular (omega)
-        """
+    def motor_dc(t, x, V_arr_inner, t_arr_inner, R, K, L, b, J):
         i, omega = x
-        di_dt = (V - R * i - K * omega) / L
+        # Interpolar el voltaje para el instante exacto t
+        V_t = np.interp(t, t_arr_inner, V_arr_inner)
+        
+        di_dt = (V_t - R * i - K * omega) / L
         domega_dt = (K * i - b * omega) / J
         return [di_dt, domega_dt]
     
-    # Condiciones iniciales: motor en reposo
-    i0 = 0
-    w0 = 0
+    i0, w0 = 0, 0
+    t_span = [t_arr[0], t_arr[-1]]
+    ode_args = (V_arr, t_arr, R_a, Ke, L_a, B, Jm)
 
-    # Resolver el sistema de ODEs usando integración numérica
-    # args=(V,) pasa el voltaje como parámetro adicional a motor_ode
-    t_eval = np.linspace(t_comienzo, t_fin, num_puntos)
+    # Integraciones numéricas
+    sol1 = solve_ivp(motor_dc, t_span, [i0, w0], method='RK45', t_eval=t_arr, args=ode_args)
+    sol2 = solve_ivp(motor_dc, t_span, [i0, w0], method='RK23', t_eval=t_arr, args=ode_args)
+    sol3 = solve_ivp(motor_dc, t_span, [i0, w0], method='BDF', t_eval=t_arr, args=ode_args)
+    sol4 = solve_ivp(motor_dc, t_span, [i0, w0], method='Radau', t_eval=t_arr, args=ode_args)
 
-    sol1 = solve_ivp(motor_dc, 
-                    [t_comienzo, t_fin], 
-                    [i0, w0], method = 'RK45', 
-                    t_eval=t_eval, 
-                    args = (V, R_a, Ke, L_a, B, Jm)) # ode45
+    if not (sol1.success and sol2.success and sol3.success and sol4.success):
+        raise RuntimeError("Error en una o más integraciones numéricas.")
 
-    sol2 = solve_ivp(motor_dc, 
-                    [t_comienzo, t_fin], 
-                    [i0, w0], method = 'RK23', 
-                    t_eval=t_eval, 
-                    args = (V, R_a, Ke, L_a, B, Jm)) # ode23
+    return (sol1.y[0], sol1.y[1], sol2.y[0], sol2.y[1],
+            sol3.y[0], sol3.y[1], sol4.y[0], sol4.y[1])
 
-    sol3 = solve_ivp(motor_dc, 
-                    [t_comienzo, t_fin], 
-                    [i0, w0], method = 'BDF', 
-                    t_eval=t_eval, 
-                    args = (V, R_a, Ke, L_a, B, Jm)) # ode23s
-
-    sol4 = solve_ivp(motor_dc, 
-                    [t_comienzo, t_fin], 
-                    [i0, w0], method = 'Radau', 
-                    t_eval=t_eval, 
-                    args = (V, R_a, Ke, L_a, B, Jm)) # ode15s
-
-
-
-    # Extraer resultados de la solución
-    i_sim1 = sol1.y[0] # Corriente simulada
-    w_sim1 = sol1.y[1]  # Velocidad simulada
-
-    i_sim2 = sol2.y[0] # Corriente simulada
-    w_sim2 = sol2.y[1]  # Velocidad simulada
-
-    i_sim3 = sol3.y[0] # Corriente simulada
-    w_sim3 = sol3.y[1]  # Velocidad simulada
-
-    i_sim4 = sol4.y[0] # Corriente simulada
-    w_sim4 = sol4.y[1]  # Velocidad simulada
-
-
-    if not sol1.success:
-        raise RuntimeError("Error en la integración numérica 1.")
-
-    if not sol2.success:
-        raise RuntimeError("Error en la integración numérica 2.")
-
-    if not sol3.success:
-        raise RuntimeError("Error en la integración numérica 3.")
-
-    if not sol4.success:
-        raise RuntimeError("Error en la integración numérica 4.")
-
-
-    return i_sim1, w_sim1, i_sim2, w_sim2,i_sim3, w_sim3,i_sim4, w_sim4
-
-def estimate_dc_motor_params(time, voltage, current, speed):
+def estimate_dc_motor_params(time_arr, voltage, current, speed):
     """
     Estima los parámetros del motor DC usando mínimos cuadrados lineales.
-
-    El modelo del motor DC tiene 6 parámetros principales:
-    - R_a: Resistencia del armadura [Ohm]
-    - L_a: Inductancia del armadura [H]
-    - K_e: Constante de fuerza contraelectromotriz [V·s/rad]
-    - K_t: Constante de torque [N·m/A]
-    - J: Momento de inercia del rotor [kg·m²]
-    - B: Coeficiente de fricción viscosa [N·m·s/rad]
-
-    Método: Resuelve el sistema sobredeterminado usando mínimos cuadrados
     """
+    # CORRECCIÓN: Derivadas numéricas correctas en NumPy
+    di_dt = np.gradient(current, time_arr) 
+    dw_dt = np.gradient(speed, time_arr)  
 
-    # Calcular derivadas numéricas usando diferencias finitas
-    dt = np.gradient(time)           # Paso de tiempo entre muestras
-    di_dt = np.gradient(current, dt) # Derivada de la corriente
-    dw_dt = np.gradient(speed, dt)   # Derivada de la velocidad
-
-    # =========================================================================
     # ESTIMACIÓN DE PARÁMETROS ELÉCTRICOS
-    # =========================================================================
-    # Ecuación del circuito eléctrico: V = R_a * i + L_a * di/dt + K_e * ω
-    # Reordenando: V - R_a*i - L_a*di/dt - K_e*ω = 0
-    # Forma matricial: X_elec * [R_a, L_a, K_e]^T = V
-
-    # Matriz de diseño para parámetros eléctricos
     X_elec = np.column_stack((current, di_dt, speed))
-    # Resolver usando mínimos cuadrados: X_elec * params_elec = voltage
     params_elec, _, _, _ = np.linalg.lstsq(X_elec, voltage, rcond=None)
     R_a, L_a, K_e = params_elec
 
-    # =========================================================================
     # ESTIMACIÓN DE PARÁMETROS MECÁNICOS
-    # =========================================================================
-    # Ecuación mecánica: J * dω/dt + B * ω = K_t * i
-    # Reordenando: J*dω/dt + B*ω - K_t*i = 0
-    # Forma matricial: X_mech * [J, B]^T = K_t * i
-
-    # Matriz de diseño para parámetros mecánicos
     X_mech = np.column_stack((dw_dt, speed))
-    # Resolver: X_mech * params_mech = K_t * current
     params_mech, _, _, _ = np.linalg.lstsq(X_mech, current * K_e, rcond=None)
     J, B = params_mech
-    K_t = K_e  # En motores DC de imán permanente, Kt ≈ Ke (igualdad teórica)
+    K_t = K_e  
 
-    # Retornar parámetros en un diccionario con unidades
     return {
         "R_a (Ohm)": R_a,
         "L_a (H)": L_a,
@@ -221,227 +120,137 @@ def estimate_dc_motor_params(time, voltage, current, speed):
         "B (N·m·s/rad)": B
     }
 
-
-
 # =============================================================================
 # PROGRAMA PRINCIPAL - ADQUISICIÓN DE DATOS Y PROCESAMIENTO
 # =============================================================================
 
 try:
-    # Solicitar confirmación al usuario para iniciar la medición
-    raw = input('Iniciar recolección de datos? (S/N)')
+    raw = input('Iniciar recolección de datos? (S/N): ').strip().upper()
 
-    # Validar entrada del usuario
-    if raw != 'S' and raw != 'N':
-        print("Error en el comando de inicio")
+    if raw == 'S':
+        if not PuertoSerial:
+            print("Error: Puerto serial no configurado.")
+            exit()
 
-    # Bucle principal de adquisición de datos
-    while True:
-
-        # Si el usuario elige 'N', salir del programa
-        if raw == 'N':
-            break
-
-        # Si el usuario elige 'S', iniciar adquisición de datos
-        elif raw == 'S':
-
-            # Validar que el puerto serial esté configurado
-            if not PuertoSerial or PuertoSerial == '':
-                print("Error: Puerto serial no configurado. Editar PuertoSerial en la configuración.")
-                break
-
-            # Establecer conexión serial con Arduino
-            try:
-                arduino = serial.Serial(PuertoSerial, Baudrate, timeout=2)
-            except serial.SerialException as e:
-                print(f"Error al conectar: {e}")
-                break
-            # timeout=2 significa que espera máximo 2 segundos por datos del Arduino
-
-            # Esperar 2 segundos para que se estabilice la conexión
-            time.sleep(2)
+        try:
+            arduino = serial.Serial(PuertoSerial, Baudrate, timeout=2)
+            time.sleep(2) # Tiempo para estabilizar el Arduino
             t_inicio = time.time()
+            
+            print("Recolectando datos... Presiona Ctrl+C para detener o espera 5 segundos.")
 
-            # Bucle de adquisición de datos en tiempo real
             while True:
-                # Registrar timestamp actual
                 tiempo = time.time()
 
-                # Leer línea completa desde el puerto serial
                 try:
                     line = arduino.readline().decode("utf-8").strip()
                 except Exception as e:
                     print(f"Error al leer datos: {e}")
                     continue
 
-                # Separar los datos (formato esperado: "corriente,velocidad")
                 datos = line.split(",")
 
-                # Verificar que se recibió una línea válida con datos
                 if line and len(datos) >= 2:
                     try:
-                        # Almacenar datos experimentales
-                        # Nota: tiempo relativo al primer dato para normalizar
                         t_data.append(tiempo - t_inicio)
-                        i_data.append(float(datos[0]))  # Convertir corriente a float
-                        w_data.append(float(datos[1]))  # Convertir velocidad a float
+                        i_data.append(float(datos[0]))  
+                        w_data.append(float(datos[1]))  
 
-                        # Actualizar gráfica de corriente en tiempo real
+                        # Actualizar gráficas en tiempo real
                         line1.set_xdata(t_data)
                         line1.set_ydata(i_data)
+                        ax1.relim()
+                        ax1.autoscale_view()
 
-                        # Actualizar gráfica de velocidad en tiempo real
                         line2.set_xdata(t_data)
                         line2.set_ydata(w_data)
+                        ax2.relim()
+                        ax2.autoscale_view()
 
-                        # Crear vector de voltaje constante (asumiendo 5V aplicado)
-                        V = 5 * np.ones_like(t_data)
-
-                        # Actualizar las gráficas en la ventana
-                        fig.canvas.draw()
-                        fig.canvas.flush_events()
+                        fig_rt.canvas.draw()
+                        fig_rt.canvas.flush_events()
                     except ValueError:
-                        print(f"Datos inválidos recibidos: {line}")
                         continue
 
-                # Condición de parada: tiempo máximo alcanzado
+                # Condición de parada automática
                 if tiempo - t_inicio >= t_fin:
+                    print("Tiempo máximo alcanzado.")
                     break
+        except KeyboardInterrupt:
+            print("\nAdquisición finalizada por el usuario.")
 
-# Manejo de interrupción por teclado (Ctrl+C)
-except KeyboardInterrupt:
-    print("Finalizado :)")
+finally:
     try:
         arduino.close()
     except:
         pass
-    t_final = time.time()
-    # =========================================================================
-    # PROCESAMIENTO FINAL DE DATOS
-    # =========================================================================
 
-    # Validar que se hayan recolectado datos
-    if len(t_data) == 0:
-        print("Error: No se recolectaron datos.")
-        exit()
+# =========================================================================
+# PROCESAMIENTO FINAL Y SIMULACIÓN
+# =========================================================================
 
-    # Convertir listas a arrays de NumPy para procesamiento numérico eficiente
-    t_data = np.array(t_data)
-    i_data = np.array(i_data)
-    w_data = np.array(w_data)
+if len(t_data) == 0:
+    print("Error: No se recolectaron datos.")
+    exit()
 
-    # Crear vector de voltaje si no existe
-    V = 5 * np.ones_like(t_data)
+# Apagar modo interactivo para que las gráficas finales no se cierren
+plt.ioff()
+plt.close(fig_rt) # Cerrar la gráfica de tiempo real
 
-    # Estimar parámetros del motor usando mínimos cuadrados
-    params = estimate_dc_motor_params(t_data, V, i_data, w_data)
+# Convertir a numpy arrays
+t_data = np.array(t_data)
+i_data = np.array(i_data)
+w_data = np.array(w_data)
 
-    # Mostrar parámetros estimados
-    print("\nParámetros estimados del motor DC:")
-    for k, v in params.items():
-        print(f"{k}: {v:.6f}")
+# Vector de voltaje aplicado (5V constante)
+V_exp = 5 * np.ones_like(t_data)
 
-    # =========================================================================
-    # SIMULACIÓN Y COMPARACIÓN VISUAL
-    # =========================================================================
-    t_eval = np.linspace(t_comienzo, t_fin, 500)
+# Estimar parámetros
+params = estimate_dc_motor_params(t_data, V_exp, i_data, w_data)
+print("\nParámetros estimados del motor DC:")
+for k, v in params.items():
+    print(f"{k}: {v:.6f}")
 
-    # Simular el comportamiento del motor con los parámetros estimados
-    i_sim1, w_sim1, i_sim2, w_sim2,i_sim3, w_sim3,i_sim4, w_sim4 = simulate_dc_motor_model(params, V, t_eval)
+# Simular con tiempo un poco más fino
+t_eval = np.linspace(t_data[0], t_data[-1], 500)
+V_sim = 5 * np.ones_like(t_eval)
 
-    # Interpolar datos experimentales al vector de tiempo de simulación
-    i_data_interp = np.interp(t_eval, t_data, i_data)
-    w_data_interp = np.interp(t_eval, t_data, w_data)
+(i_sim1, w_sim1, 
+ i_sim2, w_sim2,
+ i_sim3, w_sim3,
+ i_sim4, w_sim4) = simulate_dc_motor_model(params, V_sim, t_eval)
 
-    # Cambiar a modo no interactivo para la visualización final
-    plt.ioff()
+# Interpolar experimentales para graficar a la par
+i_data_interp = np.interp(t_eval, t_data, i_data)
+w_data_interp = np.interp(t_eval, t_data, w_data)
 
-    # Limpiar las gráficas anteriores
-    ax1.clear()
-    ax2.clear()
+# =========================================================================
+# VISUALIZACIÓN FINAL COMPACTADA
+# =========================================================================
 
-    # Crear figura con 2 filas y 4 columnas, compartiendo ejes X
-    fig, axes = plt.subplots(2, 4, figsize=(16, 8), sharex=True)
+fig, axes = plt.subplots(2, 4, figsize=(16, 8), sharex=True)
 
-    # Graficar en cada subplot
-    #    Gráfica de corriente 1
-    axes[0, 0].plot(t_eval, i_data_interp, 'blue', label='Experimental')
-    axes[0, 0].plot(t_eval, i_sim1, 'red', label='Simulado')   
-    axes[0, 0].set_title("Corriente-RK45")
-    axes[0, 0].set_xlabel("Tiempo (s)")
-    axes[0, 0].set_ylabel("Corriente (A)")
-    axes[0, 0].legend()
-    axes[0, 0].grid()
+methods = ['RK45', 'RK23', 'BDF', 'Radau']
+i_sims = [i_sim1, i_sim2, i_sim3, i_sim4]
+w_sims = [w_sim1, w_sim2, w_sim3, w_sim4]
 
-    #    Gráfica de velocidad 1
-    axes[1, 0].plot(t_eval, w_data_interp, 'blue', label='Experimental')
-    axes[1, 0].plot(t_eval, w_sim1, 'red', label='Simulado')   
-    axes[1, 0].set_title("Velocidad-RK45")
-    axes[1, 0].set_xlabel("Tiempo (s)")
-    axes[1, 0].set_ylabel("Velocidad (rad/s)")
-    axes[1, 0].legend()
-    axes[1, 0].grid()
+for col in range(4):
+    # Gráficas de corriente (Fila 0)
+    axes[0, col].plot(t_eval, i_data_interp, 'blue', alpha=0.5, label='Experimental', linewidth=2)
+    axes[0, col].plot(t_eval, i_sims[col], 'red', label='Simulado', linestyle='--')   
+    axes[0, col].set_title(f"Corriente - {methods[col]}")
+    axes[0, col].set_ylabel("Corriente (A)")
+    axes[0, col].legend()
+    axes[0, col].grid()
 
-    #    Gráfica de corriente 2
-    axes[0, 1].plot(t_eval, i_data_interp, 'blue', label='Experimental')
-    axes[0, 1].plot(t_eval, i_sim2, 'red', label='Simulado')   
-    axes[0, 1].set_title("Corriente-RK23")
-    axes[0, 1].set_xlabel("Tiempo (s)")
-    axes[0, 1].set_ylabel("Corriente (A)")
-    axes[0, 1].legend()
-    axes[0, 1].grid()
+    # Gráficas de velocidad (Fila 1)
+    axes[1, col].plot(t_eval, w_data_interp, 'blue', alpha=0.5, label='Experimental', linewidth=2)
+    axes[1, col].plot(t_eval, w_sims[col], 'red', label='Simulado', linestyle='--')   
+    axes[1, col].set_title(f"Velocidad - {methods[col]}")
+    axes[1, col].set_xlabel("Tiempo (s)")
+    axes[1, col].set_ylabel("Velocidad (rad/s)")
+    axes[1, col].legend()
+    axes[1, col].grid()
 
-    #    Gráfica de velocidad 2
-    axes[1, 1].plot(t_eval, w_data_interp, 'blue', label='Experimental')
-    axes[1, 1].plot(t_eval, w_sim2, 'red', label='Simulado')   
-    axes[1, 1].set_title("Velocidad-RK23")
-    axes[1, 1].set_xlabel("Tiempo (s)")
-    axes[1, 1].set_ylabel("Velocidad (rad/s)")
-    axes[1, 1].legend()
-    axes[1, 1].grid()
-
-    #    Gráfica de corriente 3
-    axes[0, 2].plot(t_eval, i_data_interp, 'blue', label='Experimental')
-    axes[0, 2].plot(t_eval, i_sim3, 'red', label='Simulado')   
-    axes[0, 2].set_title("Corriente-BDF")
-    axes[0, 2].set_xlabel("Tiempo (s)")
-    axes[0, 2].set_ylabel("Corriente (A)")
-    axes[0, 2].legend()
-    axes[0, 2].grid()
-
-    #   Gráfica de velocidad 3
-    axes[1, 2].plot(t_eval, w_data_interp, 'blue', label='Experimental')
-    axes[1, 2].plot(t_eval, w_sim3, 'red', label='Simulado')   
-    axes[1, 2].set_title("Velocidad-BDF")
-    axes[1, 2].set_xlabel("Tiempo (s)")
-    axes[1, 2].set_ylabel("Velocidad (rad/s)")
-    axes[1, 2].legend()
-    axes[1, 2].grid()
-
-    #   Gráfica de corriente 4
-    axes[0, 3].plot(t_eval, i_data_interp, 'blue', label='Experimental')
-    axes[0, 3].plot(t_eval, i_sim4, 'red', label='Simulado')   
-    axes[0, 3].set_title("Corriente-Radau")
-    axes[0, 3].set_xlabel("Tiempo (s)")
-    axes[0, 3].set_ylabel("Corriente (A)")
-    axes[0, 3].legend()
-    axes[0, 3].grid()
-
-    #   Gráfica de velocidad 4
-    axes[1, 3].plot(t_eval, w_data_interp, 'blue', label='Experimental')
-    axes[1, 3].plot(t_eval, w_sim4, 'red', label='Simulado')   
-    axes[1, 3].set_title("Velocidad-Radau")
-    axes[1, 3].set_xlabel("Tiempo (s)")
-    axes[1, 3].set_ylabel("Velocidad (rad/s)")
-    axes[1, 3].legend()
-    axes[1, 3].grid()
-
-    # Ajustar automáticamente el espaciado entre subgráficas
-    fig.tight_layout()
-
-    # Mostrar las gráficas finales
-    plt.show()
-
-
-
-
+fig.tight_layout()
+plt.show()
