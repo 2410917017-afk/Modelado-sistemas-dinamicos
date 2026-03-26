@@ -23,8 +23,8 @@ float velocidadRPM = 0;            // Velocidad en revoluciones por minuto
 float velRadianes = 0;             // Velocidad en radianes por segundo
 
 // Constantes del sensor de corriente ACS712
-const int ADC_OFFSET = 1921;       // Offset del ADC para cero amperios (calibrado)
-const float SENSITIVIDAD = 0.0347; // Sensibilidad del sensor (V/A, experimental)
+const int ADC_OFFSET = 3308;       // Offset del ADC para cero amperios (calibrado)
+const float SENSITIVIDAD = 0.1; // Sensibilidad del sensor (V/A, experimental)
 const float VOLTAJE_REFERENCIA = 3.3;  // Voltaje de referencia del ADC
 const int RESOLUCION_ADC = 4095;       // Resolución del ADC (12 bits)
 
