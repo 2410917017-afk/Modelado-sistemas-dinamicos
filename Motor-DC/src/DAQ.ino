@@ -1,6 +1,6 @@
 /*
  * Código para adquisición de datos (DAQ) de un motor DC.
- * Mide corriente y velocidad usando un sensor ACS712 y encoder incremental.
+ * Mide corriente y velocidad usando un sensor INA219 y encoder incremental.
  * Envía datos filtrados por serial para análisis en Python.
  */
 
