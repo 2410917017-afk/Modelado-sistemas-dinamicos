@@ -5,7 +5,10 @@
  */
 
 #include <MeanFilterLib.h>  // Librería para filtrado de media móvil
+#include "Wire.h"
+#include "Adafruit_INA219.h"
 
+Adafruit_INA219 ina219;
 
 // Definición de pines
 const int corrientePin = 5;  // Pin analógico para el sensor de corriente ACS712
@@ -22,11 +25,6 @@ unsigned long tiempoAnterior = 0;  // Tiempo del último cálculo de velocidad (
 float velocidadRPM = 0;            // Velocidad en revoluciones por minuto
 float velRadianes = 0;             // Velocidad en radianes por segundo
 
-// Constantes del sensor de corriente ACS712
-const int ADC_OFFSET = 3308;       // Offset del ADC para cero amperios (calibrado)
-const float SENSITIVIDAD = 0.1; // Sensibilidad del sensor (V/A, experimental)
-const float VOLTAJE_REFERENCIA = 3.3;  // Voltaje de referencia del ADC
-const int RESOLUCION_ADC = 4095;       // Resolución del ADC (12 bits)
 
 // Filtro de media móvil para la corriente
 MeanFilter<float> filtro(3);  // Filtro con ventana de 3 muestras
@@ -42,16 +40,13 @@ void IRAM_ATTR encoderISR() {
   }
 }
 
-// Función para leer la corriente instantánea del sensor ACS712
-// Convierte la lectura ADC a amperios
-float leerCorrienteInstantanea() {
-    int valorADC = analogRead(corrientePin);  // Leer valor del ADC
-    float voltaje = ((float)valorADC - ADC_OFFSET) * VOLTAJE_REFERENCIA / RESOLUCION_ADC;  // Convertir a voltaje
-    return voltaje / SENSITIVIDAD;  // Convertir a corriente (A)
-}
 
 void setup(){
     Serial.begin(115200);  // Iniciar comunicación serial a 115200 baudios
+
+    if (! ina219.begin()) {
+        Serial.println("Failed to find INA219 chip");  
+    }
 
     // Configurar pines
     pinMode(encoderPinA, INPUT_PULLUP);  // Pin A del encoder como entrada con pull-up
@@ -67,8 +62,8 @@ void setup(){
 
 void loop(){
     unsigned long tActual = millis();  // Obtener tiempo actual en ms
+    float current_mA = 0;
 
-    float corrienteActual = leerCorrienteInstantanea();  // Leer corriente actual
 
     // Calcular velocidad cada 100 ms
     if (tActual - tiempoAnterior >= 100) {
@@ -84,15 +79,13 @@ void loop(){
         tiempoAnterior = tActual;  // Actualizar tiempo anterior
     }
 
+    current_mA = ina219.getCurrent_mA();
+
     // Aplicar filtro de media móvil a la corriente
-    float iFiltrada = filtro.AddValue(corrienteActual);
+    float iFiltrada = filtro.AddValue(current_mA);
 
     // Enviar datos por serial: corriente filtrada, velocidad en rad/s
     Serial.print(iFiltrada);
     Serial.print(",");
     Serial.println(velRadianes);
 }
-
-// Notas de calibración del sensor de corriente ACS712
-// Ajusta ADC_OFFSET y SENSITIVIDAD según tu calibración experimental
-// Referencia: https://github.com/KevinAntezana/ESP32-ACS712
