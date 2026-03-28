@@ -14,7 +14,7 @@ from scipy.integrate import solve_ivp
 # =============================================================================
 
 # Configuración del puerto serial para comunicación con Arduino
-PuertoSerial = 'COM3'  # Ejemplo: 'COM3' - CAMBIAR según tu puerto
+PuertoSerial = 'COM7'  # Ejemplo: 'COM3' - CAMBIAR según tu puerto
 Baudrate = 115200      # Velocidad de comunicación, ej: 9600, 115200
 
 # Variables globales para almacenar datos experimentales
@@ -25,9 +25,9 @@ w_data = []  # Lista de velocidades medidas (rad/s)
 # Parámetros de la simulación
 t_comienzo = 0
 t_fin = 5  # Duración máxima de la medición en segundos
-num_puntos = 600
+num_puntos = 2000
 
-Volt = 5
+Volt = 12
 t_inicio = 0  # Variable global para almacenar el tiempo inicial
 
 # =============================================================================
@@ -203,7 +203,7 @@ i_data = np.array(i_data)
 w_data = np.array(w_data)
 
 # Vector de voltaje aplicado (5V constante)
-V_exp = 5 * np.ones_like(t_data)
+V_exp = 12 * np.ones_like(t_data)
 
 # Estimar parámetros
 params = estimate_dc_motor_params(t_data, V_exp, i_data, w_data)
@@ -213,7 +213,7 @@ for k, v in params.items():
 
 # Simular con tiempo un poco más fino
 t_eval = np.linspace(t_data[0], t_data[-1], 500)
-V_sim = 5 * np.ones_like(t_eval)
+V_sim = 12 * np.ones_like(t_eval)
 
 (i_sim1, w_sim1, 
  i_sim2, w_sim2,
