@@ -30,6 +30,11 @@ float velRadianes = 0;             // Velocidad en radianes por segundo
 MeanFilter<float> filtro(4);  // Filtro con ventana de 3 muestras
 MeanFilter<float> filtro1(3);
 
+// Variables de control del motor
+volatile bool motorActivo = false;
+volatile uint8_t pwmValor = 0;
+unsigned long tiempoArranque = 0;  // Tiempo relativo desde que el motor arranca
+
 // Interrupción para el encoder: se activa en flanco ascendente de pin A
 // Determina dirección basada en el estado de pin B
 void IRAM_ATTR encoderISR() {
@@ -56,6 +61,9 @@ void setup(){
 
     // Configurar interrupción para el encoder
     attachInterrupt(digitalPinToInterrupt(encoderPinA), encoderISR, RISING);
+    
+    // Confirmar que Arduino está listo para comunicarse
+    Serial.println("ARDUINO_LISTO");
 }
 
 
@@ -64,8 +72,38 @@ void loop(){
     unsigned long tActual = millis();  // Obtener tiempo actual en ms
     float current_A = 0;
 
+    // ========== PROCESAR COMANDOS DE PYTHON ==========
+    if (Serial.available() > 0) {
+        String cmd = Serial.readStringUntil('\n');
+        cmd.trim();
+        
+        if (cmd == "START") {
+            motorActivo = true;
+            pwmValor = 255;  // Voltaje máximo (12V)
+            analogWrite(motorPin, pwmValor);
+            tiempoArranque = millis();  // Registrar tiempo de arranque
+            Serial.println("MOTOR_INICIADO");
+        } 
+        else if (cmd == "STOP") {
+            motorActivo = false;
+            pwmValor = 0;
+            analogWrite(motorPin, 0);
+            Serial.println("MOTOR_DETENIDO");
+        }
+        else if (cmd.startsWith("PWM:")) {
+            pwmValor = atoi(cmd.substring(4).c_str());
+            analogWrite(motorPin, constrain(pwmValor, 0, 255));
+            Serial.println("PWM_ACTUALIZADO");
+        }
+    }
 
-    // Calcular velocidad cada 100 ms
+    // ========== MEDIR SOLO SI MOTOR ESTÁ ACTIVO ==========
+    if (!motorActivo) {
+        delay(5);  // Evitar spam en loop si motor está inactivo
+        return;
+    }
+
+    // Calcular velocidad cada 90 ms
     if (tActual - tiempoAnterior >= 90) {
         noInterrupts();  // Deshabilitar interrupciones para leer contador de forma segura
         long pulsos = contadorPulsos;
@@ -85,7 +123,12 @@ void loop(){
     float iFiltrada = filtro.AddValue(current_A);
     float velFiltrada = filtro1.AddValue(velRadianes);
 
-    // Enviar datos por serial: corriente filtrada, velocidad en rad/s
+    // Calcular tiempo transcurrido desde arranque (en milisegundos)
+    unsigned long tiempoRelativo = tActual - tiempoArranque;
+
+    // Enviar datos por serial: tiempoRelativo, corriente filtrada, velocidad en rad/s
+    Serial.print(tiempoRelativo);
+    Serial.print(",");
     Serial.print(iFiltrada);
     Serial.print(",");
     Serial.println(velFiltrada);
