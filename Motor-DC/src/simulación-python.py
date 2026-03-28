@@ -135,6 +135,8 @@ try:
         try:
             arduino = serial.Serial(PuertoSerial, Baudrate, timeout=2)
             time.sleep(2) # Tiempo para estabilizar el Arduino
+            arduino.write("a")
+            
             t_inicio = time.time()
             
             print("Recolectando datos... Presiona Ctrl+C para detener o espera 5 segundos.")
