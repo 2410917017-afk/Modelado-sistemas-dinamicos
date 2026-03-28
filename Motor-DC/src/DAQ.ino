@@ -1,3 +1,4 @@
+
 /*
  * Código para adquisición de datos (DAQ) de un motor DC.
  * Mide corriente y velocidad usando un sensor INA219 y encoder incremental.
@@ -27,6 +28,7 @@ float velRadianes = 0;             // Velocidad en radianes por segundo
 
 // Filtro de media móvil para la corriente
 MeanFilter<float> filtro(4);  // Filtro con ventana de 3 muestras
+MeanFilter<float> filtro1(3);
 
 // Interrupción para el encoder: se activa en flanco ascendente de pin A
 // Determina dirección basada en el estado de pin B
@@ -60,11 +62,11 @@ void setup(){
 
 void loop(){
     unsigned long tActual = millis();  // Obtener tiempo actual en ms
-    float current_mA = 0;
+    float current_A = 0;
 
 
     // Calcular velocidad cada 100 ms
-    if (tActual - tiempoAnterior >= 100) {
+    if (tActual - tiempoAnterior >= 90) {
         noInterrupts();  // Deshabilitar interrupciones para leer contador de forma segura
         long pulsos = contadorPulsos;
         contadorPulsos = 0;  // Reiniciar contador
@@ -72,18 +74,19 @@ void loop(){
 
         // Calcular velocidad en RPM
         velocidadRPM = (pulsos * (60000.0 / (tActual - tiempoAnterior))) / PULSOS_POR_VUELTA;
-        velRadianes = (velocidadRPM * 6.2832) / 60;  // Convertir a rad/s (2*pi/60)
+        velRadianes = (velocidadRPM * (-6.2832)) / 60;  // Convertir a rad/s (2*pi/60)
 
         tiempoAnterior = tActual;  // Actualizar tiempo anterior
     }
 
-    current_mA = ina219.getCurrent_mA();
+    current_A = ina219.getCurrent_mA() / 1000;
 
     // Aplicar filtro de media móvil a la corriente
-    float iFiltrada = filtro.AddValue(current_mA);
+    float iFiltrada = filtro.AddValue(current_A);
+    float velFiltrada = filtro1.AddValue(velRadianes);
 
     // Enviar datos por serial: corriente filtrada, velocidad en rad/s
     Serial.print(iFiltrada);
     Serial.print(",");
-    Serial.println(velRadianes);
+    Serial.println(velFiltrada);
 }
