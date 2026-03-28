@@ -11,10 +11,9 @@
 Adafruit_INA219 ina219;
 
 // Definición de pines
-const int corrientePin = 5;  // Pin analógico para el sensor de corriente ACS712
-const int encoderPinA = 4;   // Pin digital A del encoder incremental
-const int encoderPinB = 2;   // Pin digital B del encoder incremental
-const int motorPin = 4;      // Pin de salida para controlar el motor (PWM o señal)
+const int encoderPinA = 14;   // Pin digital A del encoder incremental
+const int encoderPinB = 12;   // Pin digital B del encoder incremental
+const int motorPin = 13;      // Pin de salida para controlar el motor (PWM o señal)
 
 // Constantes del encoder
 const int PULSOS_POR_VUELTA = 600;  // Número de pulsos por vuelta del encoder (ajustar según modelo)
@@ -27,7 +26,7 @@ float velRadianes = 0;             // Velocidad en radianes por segundo
 
 
 // Filtro de media móvil para la corriente
-MeanFilter<float> filtro(3);  // Filtro con ventana de 3 muestras
+MeanFilter<float> filtro(4);  // Filtro con ventana de 3 muestras
 
 // Interrupción para el encoder: se activa en flanco ascendente de pin A
 // Determina dirección basada en el estado de pin B
@@ -45,13 +44,12 @@ void setup(){
     Serial.begin(115200);  // Iniciar comunicación serial a 115200 baudios
 
     if (! ina219.begin()) {
-        Serial.println("Failed to find INA219 chip");  
+        Serial.println("Error en el sensor de corriente");  
     }
 
     // Configurar pines
     pinMode(encoderPinA, INPUT_PULLUP);  // Pin A del encoder como entrada con pull-up
     pinMode(encoderPinB, INPUT_PULLUP);  // Pin B del encoder como entrada con pull-up
-    pinMode(corrientePin, INPUT);        // Pin de corriente como entrada analógica
     pinMode(motorPin, OUTPUT);           // Pin del motor como salida
 
     // Configurar interrupción para el encoder
