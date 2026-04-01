@@ -1,6 +1,7 @@
 """
-Simulación y Estimación de Parámetros de Motor DC
-===============================================
+DAQ + Estimación de parámetros + Simulación — Motor DC
+Coordinado con Arduino simplificado (motor arranca en setup).
+Estimación: Savitzky-Golay para derivadas numéricas estables.
 """
 
 import serial
@@ -8,350 +9,182 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
+from scipy.signal import savgol_filter
 
 # =============================================================================
-# CONFIGURACIÓN DEL SISTEMA
+# CONFIGURACIÓN
 # =============================================================================
-
-# Configuración del puerto serial para comunicación con Arduino
-PuertoSerial = 'COM7'  
-Baudrate = 115200      # Velocidad de comunicación
-
-# Variables globales para almacenar datos experimentales
-t_data = []  # Lista de tiempos (timestamps)
-i_data = []  # Lista de corrientes medidas (A)
-w_data = []  # Lista de velocidades medidas (rad/s)
-
-# Parámetros de la simulación
-t_comienzo = 0
-t_fin = 5  # Duración máxima de la medición en segundos
-num_puntos = 2000
-
-Volt = 12
-t_inicio = 0  # Variable global para almacenar el tiempo inicial
+PORT   = 'COM7'
+BAUD   = 115200
+T_FIN  = 2.0   # segundos de captura
+VOLT   = 12.0  # voltaje aplicado (V)
 
 # =============================================================================
-# FUNCIONES DE MODELADO Y SIMULACIÓN
+# ADQUISICIÓN DE DATOS
 # =============================================================================
+t_raw, i_raw, w_raw = [], [], []
 
-def simulate_dc_motor_model(params, V_arr, t_arr):
-    """
-    Simula el modelo dinámico del motor DC usando los parámetros estimados.
-    """
-    R_a = params["R_a (Ohm)"]        
-    L_a = params["L_a (H)"]          
-    Ke = params["K_e (V·s/rad)"]     
-    Jm = params["J (kg·m²)"]          
-    B = params["B (N·m·s/rad)"]      
+print("Conectando a Arduino...")
+arduino = serial.Serial(PORT, BAUD, timeout=1)
+time.sleep(0.5)                  # Solo esperar estabilización del USB
+arduino.reset_input_buffer()     # Limpiar buffer
+print(f"Recolectando {T_FIN}s de datos (desde el arranque)...")
 
-    if abs(L_a) < 1e-6:
-        L_a = 1e-6
-
-    def motor_dc(t, x, V_arr_inner, t_arr_inner, R, K, L, b, J):
-        i, omega = x
-        # Interpolar el voltaje para el instante exacto t
-        V_t = np.interp(t, t_arr_inner, V_arr_inner)
-        
-        di_dt = (V_t - R * i - K * omega) / L
-        domega_dt = (K * i - b * omega) / J
-        return [di_dt, domega_dt]
-    
-    i0, w0 = 0, 0
-    t_span = [t_arr[0], t_arr[-1]]
-    ode_args = (V_arr, t_arr, R_a, Ke, L_a, B, Jm)
-
-    # Integraciones numéricas
-    sol1 = solve_ivp(motor_dc, t_span, [i0, w0], method='RK45', t_eval=t_arr, args=ode_args)
-    sol2 = solve_ivp(motor_dc, t_span, [i0, w0], method='RK23', t_eval=t_arr, args=ode_args)
-    sol3 = solve_ivp(motor_dc, t_span, [i0, w0], method='BDF', t_eval=t_arr, args=ode_args)
-    sol4 = solve_ivp(motor_dc, t_span, [i0, w0], method='Radau', t_eval=t_arr, args=ode_args)
-
-    if not (sol1.success and sol2.success and sol3.success and sol4.success):
-        raise RuntimeError("Error en una o más integraciones numéricas.")
-
-    return (sol1.y[0], sol1.y[1], sol2.y[0], sol2.y[1],
-            sol3.y[0], sol3.y[1], sol4.y[0], sol4.y[1])
-
-def estimate_dc_motor_params(time_arr, voltage, current, speed):
-    """
-    Estima los parámetros del motor DC usando mínimos cuadrados lineales.
-    Filtra datos transitorios iniciales para mejorar la estimación.
-    """
-    # FILTRAR: Descartar primeros 10% de datos (transitorios de arranque)
-    idx_start = int(len(time_arr) * 0.1)
-    
-    time_arr = time_arr[idx_start:]
-    voltage = voltage[idx_start:]
-    current = current[idx_start:]
-    speed = speed[idx_start:]
-    
-    # VALIDAR: Descartar datos anómalos con rango razonable
-    current = np.clip(current, -5, 5)  # Rango razonable para corriente (A)
-    speed = np.clip(speed, -100, 100)  # Rango razonable para velocidad (rad/s)
-    
-    # CORRECCIÓN: Derivadas numéricas correctas en NumPy
-    di_dt = np.gradient(current, time_arr) 
-    dw_dt = np.gradient(speed, time_arr)  
-
-    # ESTIMACIÓN DE PARÁMETROS ELÉCTRICOS
-    X_elec = np.column_stack((current, di_dt, speed))
-    params_elec, _, _, _ = np.linalg.lstsq(X_elec, voltage, rcond=None)
-    R_a, L_a, K_e = params_elec
-
-    # Validar valores físicos razonables para parámetros eléctricos
-    R_a = np.clip(R_a, 0.1, 100)      # Resistencia: 0.1-100 Ohm
-    L_a = np.clip(L_a, 0, 1)          # Inductancia: 0-1 H
-    K_e = np.clip(K_e, 0.001, 1)      # Constante: 0.001-1 V·s/rad
-
-    # ESTIMACIÓN DE PARÁMETROS MECÁNICOS
-    X_mech = np.column_stack((dw_dt, speed))
-    params_mech, _, _, _ = np.linalg.lstsq(X_mech, current * K_e, rcond=None)
-    J, B = params_mech
-    
-    # Validar valores físicos razonables para parámetros mecánicos
-    J = np.clip(J, 1e-6, 1)           # Inercia: 1e-6 a 1 kg·m²
-    B = np.clip(B, 1e-4, 1)           # Amortiguamiento: pequeño pero positivo
-    
-    K_t = K_e  # Por reciprocidad: K_t = K_e en motor DC
-
-    return {
-        "R_a (Ohm)": abs(R_a),
-        "L_a (H)": abs(L_a),
-        "K_e (V·s/rad)": abs(K_e),
-        "K_t (N·m/A)": abs(K_t),
-        "J (kg·m²)": abs(J),
-        "B (N·m·s/rad)": abs(B)
-    }
-
-# =============================================================================
-# PROGRAMA PRINCIPAL - ADQUISICIÓN DE DATOS Y PROCESAMIENTO
-# =============================================================================
-
-try:
-    raw = input('Iniciar recolección de datos? (S/N): ').strip().upper()
-
-    if raw == 'S':
-        if not PuertoSerial:
-            print("Error: Puerto serial no configurado.")
-            exit()
-
-        try:
-            arduino = serial.Serial(PuertoSerial, Baudrate, timeout=3)
-            time.sleep(2)
-            
-            # ===== SINCRONIZACIÓN: Esperar confirmación de Arduino =====
-            print("Esperando confirmación de Arduino...")
-            arduino_listo = False
-            tiempo_espera = time.time()
-            
-            while time.time() - tiempo_espera < 10:  # Timeout 10 segundos
-                try:
-                    confirmacion = arduino.readline().decode("utf-8").strip()
-                    if "ARDUINO_LISTO" in confirmacion:
-                        print("✓ Arduino listo para comunicarse")
-                        arduino_listo = True
-                        break
-                except:
-                    continue
-            
-            if not arduino_listo:
-                print("✗ Error: Arduino no respondió. Verifica la conexión.")
-                exit()
-            
-            # ===== ENVIAR COMANDO DE ARRANQUE AL MOTOR =====
-            print("Arrancando motor...")
-            arduino.write(b"START\n")
-            
-            # Esperar confirmación de arranque
-            while time.time() - tiempo_espera < 15:
-                try:
-                    respuesta = arduino.readline().decode("utf-8").strip()
-                    if "MOTOR_INICIADO" in respuesta:
-                        print("✓ Motor arrancado correctamente")
-                        break
-                except:
-                    continue
-            
-            # ===== ESPERAR ESTABILIZACIÓN (régimen permanente) =====
-            print("Esperando estabilización (2 segundos)...")
-            time.sleep(2)
-            
-            t_inicio = time.time()
-            t_datos_inicio = None  # Timestamp del Arduino en el primer dato válido
-            
-            print("Recolectando datos... Presiona Ctrl+C para detener o espera 5 segundos.")
-            print("Formato esperado: tiempo_arduino(ms),corriente(A),velocidad(rad/s)")
-
-            while True:
-                tiempo_actual = time.time()
-
-                try:
-                    line = arduino.readline().decode("utf-8").strip()
-                except Exception as e:
-                    print(f"⚠ Error al leer datos: {e}")
-                    continue
-
-                datos = line.split(",")
-
-                # Esperamos 3 campos: tiempo_arduino, corriente, velocidad
-                if line and len(datos) >= 3:
-                    try:
-                        t_arduino = int(datos[0])      # Timestamp del Arduino (ms desde arranque)
-                        i_medida = float(datos[1])     # Corriente (A)
-                        w_medida = float(datos[2])     # Velocidad (rad/s)
-                        
-                        # SINCRONIZACIÓN: Registrar tiempo del Arduino en primer dato
-                        if t_datos_inicio is None:
-                            t_datos_inicio = t_arduino
-                        
-                        # Convertir tiempo Arduino a segundos desde arranque
-                        t_sync = (t_arduino - t_datos_inicio) / 1000.0
-                        
-                        t_data.append(t_sync)
-                        i_data.append(i_medida)
-                        w_data.append(w_medida)
-                        
-                    except ValueError:
-                        continue
-
-                # Condición de parada automática
-                if tiempo_actual - t_inicio >= t_fin:
-                    print(f"✓ Tiempo máximo ({t_fin}s) alcanzado.")
-                    break
-                    
-        except KeyboardInterrupt:
-            print("\n✓ Adquisición finalizada por el usuario.")
-        finally:
-            try:
-                # Detener el motor
-                arduino.write(b"STOP\n")
-                time.sleep(0.5)
-                arduino.close()
-            except:
-                pass
-
-except Exception as e:
-    print(f"Error en el programa: {e}")
-finally:
+t0 = time.time()
+while time.time() - t0 < T_FIN:
     try:
-        arduino.close()
-    except:
+        line = arduino.readline().decode('utf-8', errors='ignore').strip()
+        parts = line.split(',')
+        if len(parts) == 3:
+            t_ms = int(parts[0])
+            i    = float(parts[1])
+            w    = float(parts[2])
+            t_raw.append(t_ms / 1000.0)
+            i_raw.append(i)
+            w_raw.append(w)
+    except (ValueError, UnicodeDecodeError):
         pass
 
-# =========================================================================
-# PROCESAMIENTO FINAL Y SIMULACIÓN
-# =========================================================================
+arduino.close()
+print(f"✓ {len(t_raw)} muestras capturadas.")
 
-if len(t_data) == 0:
-    print("Error: No se recolectaron datos.")
+if len(t_raw) < 10:
+    print("Error: datos insuficientes.")
     exit()
 
-# Convertir a numpy arrays
-t_data = np.array(t_data)
-i_data = np.array(i_data)
-w_data = np.array(w_data)
+# Convertir y normalizar tiempo
+t = np.array(t_raw) - t_raw[0]
+i = np.array(i_raw)
+w = np.array(w_raw)
 
-# =========================================================================
-# ANÁLISIS DEL TIEMPO DE MUESTREO
-# =========================================================================
+# =============================================================================
+# ANÁLISIS DE MUESTREO
+# =============================================================================
+dt   = np.diff(t)
+fs   = 1.0 / np.mean(dt)
+print(f"\nFs promedio : {fs:.1f} Hz  |  Ts promedio : {np.mean(dt)*1000:.2f} ms")
+print(f"Variación Ts: {np.std(dt)/np.mean(dt)*100:.1f}%")
 
-print("\n" + "="*70)
-print("ANÁLISIS DEL TIEMPO DE MUESTREO")
-print("="*70)
+# =============================================================================
+# ESTIMACIÓN DE PARÁMETROS — Nivel 1: Savitzky-Golay
+# =============================================================================
+def estimar_params(t, i, w, V):
+    """
+    Mínimos cuadrados con derivadas calculadas via Savitzky-Golay.
+    - No descarta el transitorio (es donde J y L son identificables).
+    - SG filtra y deriva simultáneamente → mucho más estable que np.gradient.
+    - La ventana debe ser impar y > polyorder. Ajustar según densidad de muestras.
+    """
+    i = np.clip(i, -5,   5  )
+    w = np.clip(w, -200, 200)
+    V_vec = V * np.ones_like(t)
 
-# Calcular intervalos entre muestras
-dt_samples = np.diff(t_data)
-ts_mean = np.mean(dt_samples)
-ts_std = np.std(dt_samples)
-ts_min = np.min(dt_samples)
-ts_max = np.max(dt_samples)
-fs_mean = 1.0 / ts_mean if ts_mean > 0 else np.inf
+    # Ventana SG: ~10% del total de muestras, mínimo 7, siempre impar
+    n = len(t)
+    win = max(7, int(n * 0.10) | 1)   # '| 1' fuerza impar
+    poly = 3                            # Grado del polinomio
 
-print(f"Número total de muestras: {len(t_data)}")
-print(f"Duración total: {t_data[-1]:.2f} segundos")
-print(f"\nIntervalo de muestreo (Ts):")
-print(f"  Promedio: {ts_mean*1000:.2f} ms ({fs_mean:.2f} Hz)")
-print(f"  Desv. Est.: {ts_std*1000:.2f} ms")
-print(f"  Mínimo: {ts_min*1000:.2f} ms")
-print(f"  Máximo: {ts_max*1000:.2f} ms")
-print(f"  Variación: {(ts_std/ts_mean)*100:.1f}%")
+    # Señales suavizadas (para visualización y para el lado derecho de las ecuaciones)
+    i_sg = savgol_filter(i, win, poly)
+    w_sg = savgol_filter(w, win, poly)
 
-# Analizar consistencia del muestreo
-ts_nominal = 0.090  # Arduino cada 90ms (velocidad)
-variacion_permisible = 0.10  # 10% de variación
+    # Derivadas: SG calcula la derivada analítica del polinomio local → muy limpio
+    ts_medio = np.mean(np.diff(t))     # Ts promedio (necesario para el argumento delta)
+    di_dt = savgol_filter(i, win, poly, deriv=1, delta=ts_medio)
+    dw_dt = savgol_filter(w, win, poly, deriv=1, delta=ts_medio)
 
-if ts_std / ts_mean < variacion_permisible:
-    print(f"✓ Muestreo CONSISTENTE (variación < {variacion_permisible*100}%)")
-else:
-    print(f"⚠ Muestreo VARIABLE (variación > {variacion_permisible*100}%)")
-    print(f"  Esto puede afectar la precisión de las derivadas")
+    # --- Parámetros eléctricos: V = R·i + L·di/dt + Ke·w ---
+    A_elec = np.column_stack((i_sg, di_dt, w_sg))
+    R, L, Ke = np.linalg.lstsq(A_elec, V_vec, rcond=None)[0]
 
-# Detectar frecuencia de Nyquist
-nyquist_freq = fs_mean / 2
-print(f"\nFrecuencia de Nyquist: {nyquist_freq:.2f} Hz")
-print(f"Dinámica del motor DC típica: < 100 Hz")
+    # --- Parámetros mecánicos: Ke·i = J·dw/dt + B·w ---
+    A_mec = np.column_stack((dw_dt, w_sg))
+    J, B  = np.linalg.lstsq(A_mec, abs(Ke) * i_sg, rcond=None)[0]
 
-if nyquist_freq > 100:
-    print(f"✓ Frecuencia de muestreo ADECUADA para dinamica del motor")
-else:
-    print(f"⚠ Frecuencia de muestreo BAJA para dinamica completa del motor")
+    params = {
+        "R_a (Ohm)"     : abs(np.clip(R,  0.1,  100 )),
+        "L_a (H)"       : abs(np.clip(L,  1e-6, 1   )),
+        "K_e (V·s/rad)" : abs(np.clip(Ke, 0.001, 1  )),
+        "K_t (N·m/A)"   : abs(np.clip(Ke, 0.001, 1  )),
+        "J (kg·m²)"     : abs(np.clip(J,  1e-6, 1   )),
+        "B (N·m·s/rad)" : abs(np.clip(B,  1e-6, 1   )),
+    }
+    # Devolver señales suavizadas para graficarlas aparte
+    return params, i_sg, w_sg
 
-# Vector de voltaje aplicado
-V_exp = Volt * np.ones_like(t_data)
-
-print("\n" + "="*70)
-
-# Estimar parámetros
-params = estimate_dc_motor_params(t_data, V_exp, i_data, w_data)
-print("\nParámetros estimados del motor DC:")
+params, i_suave, w_suave = estimar_params(t, i, w, VOLT)
+print("\nParámetros estimados (Savitzky-Golay):")
 for k, v in params.items():
-    print(f"{k}: {v:.6f}")
+    print(f"  {k}: {v:.6f}")
 
-# Simular con tiempo un poco más fino
-t_eval = np.linspace(t_data[0], t_data[-1], 500)
-V_sim = 12 * np.ones_like(t_eval)
+# =============================================================================
+# SIMULACIÓN DEL MOTOR CON 4 MÉTODOS NUMÉRICOS
+# =============================================================================
+def simular_motor(params, t_eval, V=12.0):
+    R  = params["R_a (Ohm)"]
+    L  = max(params["L_a (H)"], 1e-6)
+    Ke = params["K_e (V·s/rad)"]
+    J  = params["J (kg·m²)"]
+    B  = params["B (N·m·s/rad)"]
 
-(i_sim1, w_sim1, 
- i_sim2, w_sim2,
- i_sim3, w_sim3,
- i_sim4, w_sim4) = simulate_dc_motor_model(params, V_sim, t_eval)
+    def odes(t, x):
+        i_s, w_s = x
+        di = (V - R * i_s - Ke * w_s) / L
+        dw = (Ke * i_s - B * w_s) / J
+        return [di, dw]
 
-# Interpolar experimentales para graficar a la par
-i_data_interp = np.interp(t_eval, t_data, i_data)
-w_data_interp = np.interp(t_eval, t_data, w_data)
+    resultados = {}
+    for metodo in ['RK45', 'RK23', 'BDF', 'Radau']:
+        sol = solve_ivp(odes, [t_eval[0], t_eval[-1]], [0, 0],
+                        method=metodo, t_eval=t_eval)
+        if sol.success:
+            resultados[metodo] = (sol.y[0], sol.y[1])
+        else:
+            print(f"⚠ {metodo} no convergió.")
 
-# =========================================================================
-# VISUALIZACIÓN FINAL COMPACTADA
-# =========================================================================
+    return resultados
 
-fig, axes = plt.subplots(2, 4, figsize=(18, 8), sharex=True)
+t_sim = np.linspace(t[0], t[-1], 500)
+sims  = simular_motor(params, t_sim, VOLT)
 
-methods = ['RK45', 'RK23', 'BDF', 'Radau']
-i_sims = [i_sim1, i_sim2, i_sim3, i_sim4]
-w_sims = [w_sim1, w_sim2, w_sim3, w_sim4]
+# =============================================================================
+# VISUALIZACIÓN
+# =============================================================================
+metodos  = list(sims.keys())
+i_raw_interp  = np.interp(t_sim, t, i)
+w_raw_interp  = np.interp(t_sim, t, w)
+i_sg_interp   = np.interp(t_sim, t, i_suave)
+w_sg_interp   = np.interp(t_sim, t, w_suave)
 
-for col in range(4):
-    # Gráficas de corriente (Fila 0)
-    axes[0, col].plot(t_eval, i_data_interp, 'blue', alpha=0.6, label='Experimental', linewidth=2.5)
-    axes[0, col].plot(t_eval, i_sims[col], 'red', label='Simulado', linestyle='--', linewidth=1.5)   
-    axes[0, col].set_title(f"Corriente - {methods[col]}", fontsize=11, fontweight='bold')
-    axes[0, col].set_ylabel("Corriente (A)", fontsize=10)
-    axes[0, col].legend(loc='best', fontsize=9)
-    axes[0, col].grid(True, alpha=0.3)
+fig, axes = plt.subplots(2, len(metodos), figsize=(16, 7), sharex=True)
 
-    # Gráficas de velocidad (Fila 1)
-    axes[1, col].plot(t_eval, w_data_interp, 'blue', alpha=0.6, label='Experimental', linewidth=2.5)
-    axes[1, col].plot(t_eval, w_sims[col], 'red', label='Simulado', linestyle='--', linewidth=1.5)   
-    axes[1, col].set_title(f"Velocidad - {methods[col]}", fontsize=11, fontweight='bold')
-    axes[1, col].set_xlabel("Tiempo (s)", fontsize=10)
-    axes[1, col].set_ylabel("Velocidad (rad/s)", fontsize=10)
-    axes[1, col].legend(loc='best', fontsize=9)
-    axes[1, col].grid(True, alpha=0.3)
+for col, metodo in enumerate(metodos):
+    i_sim, w_sim = sims[metodo]
 
-# Agregar información de muestreo en el título general
-fig.suptitle(f'Comparación Datos Experimentales vs Simulación\n' + 
-             f'Fs={fs_mean:.2f} Hz, Ts={ts_mean*1000:.2f} ms, Muestras={len(t_data)}',
-             fontsize=12, fontweight='bold', y=1.00)
+    # --- Corriente ---
+    ax = axes[0, col]
+    ax.plot(t_sim, i_raw_interp, color='steelblue', lw=1,   alpha=0.35, label='Raw')
+    ax.plot(t_sim, i_sg_interp,  color='steelblue', lw=2,   alpha=0.9,  label='SG filtrado')
+    ax.plot(t_sim, i_sim,        color='tomato',    lw=1.5, ls='--',    label='Simulado')
+    ax.set_title(metodo, fontweight='bold')
+    ax.set_ylabel("Corriente (A)")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
 
+    # --- Velocidad ---
+    ax = axes[1, col]
+    ax.plot(t_sim, w_raw_interp, color='seagreen', lw=1,   alpha=0.35, label='Raw')
+    ax.plot(t_sim, w_sg_interp,  color='seagreen', lw=2,   alpha=0.9,  label='SG filtrado')
+    ax.plot(t_sim, w_sim,        color='tomato',   lw=1.5, ls='--',    label='Simulado')
+    ax.set_ylabel("Velocidad (rad/s)")
+    ax.set_xlabel("Tiempo (s)")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+
+fig.suptitle(
+    f"Motor DC — Raw / SG filtrado / Simulación  |  "
+    f"Fs={fs:.1f} Hz  |  N={len(t)} muestras",
+    fontweight='bold', fontsize=12
+)
 fig.tight_layout()
 plt.show()

@@ -1,135 +1,174 @@
-
 /*
- * Código para adquisición de datos (DAQ) de un motor DC.
- * Mide corriente y velocidad usando un sensor INA219 y encoder incremental.
- * Envía datos filtrados por serial para análisis en Python.
+ * DAQ Motor DC — ESP32 Dual Core
+ * ────────────────────────────────────────────────────────────
+ * Núcleo 0 → Lectura INA219 (I2C) + Envío Serial
+ * Núcleo 1 → Cálculo de velocidad del encoder (default de Arduino)
+ * ────────────────────────────────────────────────────────────
  */
 
-#include <MeanFilterLib.h>  // Librería para filtrado de media móvil
 #include "Wire.h"
-#include "Adafruit_INA219.h"
+#include "WiFi.h"
+#include "driver/ledc.h"  // PWM del ESP32
 
-Adafruit_INA219 ina219;
+// =============================================================================
+// CONFIGURACIÓN
+// =============================================================================
+const int PIN_ENCODER_A = 18;   // Encoder canal A
+const int PIN_ENCODER_B = 19;   // Encoder canal B
+const int PIN_MOTOR     = 5;   // PWM motor
+const int PPR           = 600;  // Pulsos por vuelta
 
-// Definición de pines
-const int encoderPinA = 14;   // Pin digital A del encoder incremental
-const int encoderPinB = 12;   // Pin digital B del encoder incremental
-const int motorPin = 13;      // Pin de salida para controlar el motor (PWM o señal)
+// PWM motor (LEDC del ESP32)
+const int LEDC_CANAL    = 0;
+const int LEDC_FREQ     = 5000;  // 5 kHz
+const int LEDC_BITS     = 8;     // Resolución 8 bits (0-255)
 
-// Constantes del encoder
-const int PULSOS_POR_VUELTA = 600;  // Número de pulsos por vuelta del encoder (ajustar según modelo)
+// I2C INA219
+const uint8_t INA219_ADDR  = 0x40;
+const float   R_SHUNT      = 0.1;   // Ohms
+const float   LSB_SHUNT_uV = 10.0;  // µV por bit
 
-// Variables para el encoder y velocidad
-volatile long contadorPulsos = 0;  // Contador de pulsos (volatile para interrupciones)
-unsigned long tiempoAnterior = 0;  // Tiempo del último cálculo de velocidad (ms)
-float velocidadRPM = 0;            // Velocidad en revoluciones por minuto
-float velRadianes = 0;             // Velocidad en radianes por segundo
+// Intervalo de cálculo de velocidad
+const uint32_t T_VELOCIDAD_MS = 20;  // ms
 
+// =============================================================================
+// VARIABLES COMPARTIDAS ENTRE NÚCLEOS
+// Usar volatile + mutex para acceso seguro entre tareas
+// =============================================================================
+volatile float g_corriente = 0.0;
+volatile float g_radps     = 0.0;
+volatile long  g_pulsos    = 0;
 
-// Filtro de media móvil para la corriente
-MeanFilter<float> filtro(4);  // Filtro con ventana de 3 muestras
-MeanFilter<float> filtro1(3);
+portMUX_TYPE mux_pulsos    = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE mux_corriente = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE mux_radps     = portMUX_INITIALIZER_UNLOCKED;
 
-// Variables de control del motor
-volatile bool motorActivo = false;
-volatile uint8_t pwmValor = 0;
-unsigned long tiempoArranque = 0;  // Tiempo relativo desde que el motor arranca
+// =============================================================================
+// INA219 — Lectura directa por registros (sin librería)
+// =============================================================================
+void ina219_escribir(uint8_t reg, uint16_t valor) {
+  Wire.beginTransmission(INA219_ADDR);
+  Wire.write(reg);
+  Wire.write((valor >> 8) & 0xFF);
+  Wire.write(valor & 0xFF);
+  Wire.endTransmission();
+}
 
-// Interrupción para el encoder: se activa en flanco ascendente de pin A
-// Determina dirección basada en el estado de pin B
+float ina219_leerCorriente() {
+  Wire.beginTransmission(INA219_ADDR);
+  Wire.write(0x01);  // Registro voltaje shunt
+  Wire.endTransmission();
+  Wire.requestFrom(INA219_ADDR, (uint8_t)2);
+  int16_t raw = (Wire.read() << 8) | Wire.read();
+  return ((raw * LSB_SHUNT_uV) / 1e6) / R_SHUNT;  // Amperes
+}
+
+// =============================================================================
+// ENCODER — ISR (las ISR del ESP32 corren en el núcleo que las registró)
+// =============================================================================
 void IRAM_ATTR encoderISR() {
-  int estadoB = digitalRead(encoderPinB);
-  if (estadoB == HIGH) {
-    contadorPulsos++;  // Dirección positiva
-  } else {
-    contadorPulsos--;  // Dirección negativa
+  static uint32_t ultimo_us = 0;
+  uint32_t ahora = micros();
+  if (ahora - ultimo_us < 500) return;  // Anti-rebote: ignorar pulsos < 500µs
+  ultimo_us = ahora;
+
+  portENTER_CRITICAL_ISR(&mux_pulsos);
+  digitalRead(PIN_ENCODER_B) ? g_pulsos++ : g_pulsos--;
+  portEXIT_CRITICAL_ISR(&mux_pulsos);
+}
+
+// =============================================================================
+// TAREA NÚCLEO 0 — Lectura INA219 + Envío Serial
+// =============================================================================
+void TaskSensores(void *pvParameters) {
+  Wire.begin(21, 22);    // SDA=GPIO21, SCL=GPIO22 (pines estándar ESP32)
+  Wire.setClock(400000); // Fast mode 400 kHz
+
+  // Verificar que el INA219 responde
+  Wire.beginTransmission(INA219_ADDR);
+  if (Wire.endTransmission() != 0) {
+    Serial.println("ERROR_INA219");
+    vTaskDelete(NULL);
+    return;
+  }
+
+  // Configurar INA219: modo continuo, 12-bit, sin promedio
+  ina219_escribir(0x00, 0x399F);
+  ina219_escribir(0x05, 4096);  // Calibración para Imax ~3.2A con R=0.1Ω
+
+  Serial.println("LISTO");
+
+  for (;;) {
+    float corriente = ina219_leerCorriente();
+
+    portENTER_CRITICAL(&mux_corriente);
+    g_corriente = corriente;
+    portEXIT_CRITICAL(&mux_corriente);
+
+    float radps_local;
+    portENTER_CRITICAL(&mux_radps);
+    radps_local = g_radps;
+    portEXIT_CRITICAL(&mux_radps);
+
+    // Un solo printf es más rápido que múltiples Serial.print
+    Serial.printf("%lu,%.4f,%.4f\n", millis(), corriente, radps_local);
+
+    vTaskDelay(1 / portTICK_PERIOD_MS);  // Cede CPU, evita WDT
   }
 }
 
+// =============================================================================
+// TAREA NÚCLEO 1 — Cálculo de velocidad del encoder
+// Mismo núcleo que las ISR → no hay contención en el mutex de pulsos
+// =============================================================================
+void TaskVelocidad(void *pvParameters) {
+  uint32_t tAnterior = millis();
 
-void setup(){
-    Serial.begin(115200);  // Iniciar comunicación serial a 115200 baudios
+  for (;;) {
+    vTaskDelay(T_VELOCIDAD_MS / portTICK_PERIOD_MS);
 
-    if (! ina219.begin()) {
-        Serial.println("Error en el sensor de corriente");  
-    }
+    uint32_t tActual = millis();
+    uint32_t dt      = tActual - tAnterior;
 
-    // Configurar pines
-    pinMode(encoderPinA, INPUT_PULLUP);  // Pin A del encoder como entrada con pull-up
-    pinMode(encoderPinB, INPUT_PULLUP);  // Pin B del encoder como entrada con pull-up
-    pinMode(motorPin, OUTPUT);           // Pin del motor como salida
+    long pulsos_local;
+    portENTER_CRITICAL(&mux_pulsos);
+    pulsos_local = g_pulsos;
+    g_pulsos     = 0;
+    portEXIT_CRITICAL(&mux_pulsos);
 
-    // Configurar interrupción para el encoder
-    attachInterrupt(digitalPinToInterrupt(encoderPinA), encoderISR, RISING);
-    
-    // Confirmar que Arduino está listo para comunicarse
-    Serial.println("ARDUINO_LISTO");
+    float rpm   = (pulsos_local * 60000.0 / dt) / PPR;
+    float radps = (rpm * 6.2832 / 60.0)*(-1);
+
+    portENTER_CRITICAL(&mux_radps);
+    g_radps = radps;
+    portEXIT_CRITICAL(&mux_radps);
+
+    tAnterior = tActual;
+  }
 }
 
+// =============================================================================
+// SETUP
+// =============================================================================
+void setup() {
+  WiFi.mode(WIFI_OFF);  // Apagar WiFi y Bluetooth libera ~80KB RAM
+  btStop();
 
+  Serial.begin(115200);
 
-void loop(){
-    unsigned long tActual = millis();  // Obtener tiempo actual en ms
-    float current_A = 0;
+  // PWM del motor con LEDC (reemplaza analogWrite en ESP32)
+  analogWrite(PIN_MOTOR, 255);
 
-    // ========== PROCESAR COMANDOS DE PYTHON ==========
-    if (Serial.available() > 0) {
-        String cmd = Serial.readStringUntil('\n');
-        cmd.trim();
-        
-        if (cmd == "START") {
-            motorActivo = true;
-            pwmValor = 255;  // Voltaje máximo (12V)
-            analogWrite(motorPin, pwmValor);
-            tiempoArranque = millis();  // Registrar tiempo de arranque
-            Serial.println("MOTOR_INICIADO");
-        } 
-        else if (cmd == "STOP") {
-            motorActivo = false;
-            pwmValor = 0;
-            analogWrite(motorPin, 0);
-            Serial.println("MOTOR_DETENIDO");
-        }
-        else if (cmd.startsWith("PWM:")) {
-            pwmValor = atoi(cmd.substring(4).c_str());
-            analogWrite(motorPin, constrain(pwmValor, 0, 255));
-            Serial.println("PWM_ACTUALIZADO");
-        }
-    }
+  pinMode(PIN_ENCODER_A, INPUT_PULLUP);
+  pinMode(PIN_ENCODER_B, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_A), encoderISR, RISING);
 
-    // ========== MEDIR SOLO SI MOTOR ESTÁ ACTIVO ==========
-    if (!motorActivo) {
-        delay(5);  // Evitar spam en loop si motor está inactivo
-        return;
-    }
+  //                     Nombre       Stack   Param  Prior  Handle  Núcleo
+  xTaskCreatePinnedToCore(TaskSensores,  "I2C+TX",  4096, NULL, 2, NULL, 0);
+  xTaskCreatePinnedToCore(TaskVelocidad, "Encoder", 2048, NULL, 1, NULL, 1);
+}
 
-    // Calcular velocidad cada 90 ms
-    if (tActual - tiempoAnterior >= 90) {
-        noInterrupts();  // Deshabilitar interrupciones para leer contador de forma segura
-        long pulsos = contadorPulsos;
-        contadorPulsos = 0;  // Reiniciar contador
-        interrupts();  // Rehabilitar interrupciones
-
-        // Calcular velocidad en RPM
-        velocidadRPM = (pulsos * (60000.0 / (tActual - tiempoAnterior))) / PULSOS_POR_VUELTA;
-        velRadianes = (velocidadRPM * (-6.2832)) / 60;  // Convertir a rad/s (2*pi/60)
-
-        tiempoAnterior = tActual;  // Actualizar tiempo anterior
-    }
-
-    current_A = ina219.getCurrent_mA() / 1000;
-
-    // Aplicar filtro de media móvil a la corriente
-    float iFiltrada = filtro.AddValue(current_A);
-    float velFiltrada = filtro1.AddValue(velRadianes);
-
-    // Calcular tiempo transcurrido desde arranque (en milisegundos)
-    unsigned long tiempoRelativo = tActual - tiempoArranque;
-
-    // Enviar datos por serial: tiempoRelativo, corriente filtrada, velocidad en rad/s
-    Serial.print(tiempoRelativo);
-    Serial.print(",");
-    Serial.print(iFiltrada);
-    Serial.print(",");
-    Serial.println(velFiltrada);
+// loop() vacío — todo corre en las tareas FreeRTOS
+void loop() {
+  vTaskDelete(NULL);  // Eliminar tarea loop para liberar recursos
 }
