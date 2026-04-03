@@ -22,7 +22,7 @@ VOLT   = 12.0  # voltaje aplicado (V)
 # =============================================================================
 # ADQUISICIÓN DE DATOS
 # =============================================================================
-t_raw, i_raw, w_raw = [], [], []
+t_raw, i_raw, w_raw, v_raw = [], [], [], []
 
 print("Conectando a Arduino...")
 arduino = serial.Serial(PORT, BAUD, timeout=1)
@@ -35,11 +35,13 @@ while time.time() - t0 < T_FIN:
     try:
         line = arduino.readline().decode('utf-8', errors='ignore').strip()
         parts = line.split(',')
-        if len(parts) == 3:
+        if len(parts) == 4:
             t_ms = int(parts[0])
-            i    = float(parts[1])
-            w    = float(parts[2])
+            v    = float(parts[1])
+            i    = float(parts[2])
+            w    = float(parts[3])
             t_raw.append(t_ms / 1000.0)
+            v_raw.append(v)
             i_raw.append(i)
             w_raw.append(w)
     except (ValueError, UnicodeDecodeError):
@@ -56,6 +58,7 @@ if len(t_raw) < 10:
 t = np.array(t_raw) - t_raw[0]
 i = np.array(i_raw)
 w = np.array(w_raw)
+vnp = np.array(v_raw)
 
 # =============================================================================
 # ANÁLISIS DE MUESTREO
@@ -68,7 +71,7 @@ print(f"Variación Ts: {np.std(dt)/np.mean(dt)*100:.1f}%")
 # =============================================================================
 # ESTIMACIÓN DE PARÁMETROS — Nivel 1: Savitzky-Golay
 # =============================================================================
-def estimar_params(t, i, w, V):
+def estimar_params(t, v, i, w):
     """
     Mínimos cuadrados con derivadas calculadas via Savitzky-Golay.
     - No descarta el transitorio (es donde J y L son identificables).
@@ -77,7 +80,7 @@ def estimar_params(t, i, w, V):
     """
     i = np.clip(i, -5,   5  )
     w = np.clip(w, -200, 200)
-    V_vec = V * np.ones_like(t)
+    V_vec = vnp
 
     # Ventana SG: ~10% del total de muestras, mínimo 7, siempre impar
     n = len(t)

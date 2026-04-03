@@ -3,39 +3,51 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
+from scipy.optimize import minimize
 
 # -----------------------------------------------
-# parámetros del modelo masa‑resorte‑amortiguador
-# --------------------------------------------------
+# Parámetros nominales del modelo masa-resorte-amortiguador
+# (se usan como punto de partida para la estimación)
+# -----------------------------------------------
 m = 0.1739      # masa (kg)
-k = 750       # constante del resorte (N/m)
-b = 2.5  # fricción (N·s/m)
+k = 750.0       # constante del resorte (N/m)
+b = 2.5         # fricción (N·s/m)
 
-x0 = -0.01    # desplazamiento inicial (m)
+x0 = -0.01      # desplazamiento inicial (m)
 v0 = 0.0        # velocidad inicial (m/s)
-t_comienzo = 0
 
-t_inicio = 0
 t_fin = 2.0
 num_puntos = 500
 
-def sistema(t, y):
-    """
-    y[0] = x (posición)
-    y[1] = v (velocidad)
-    """
+# --------------------------------------------------
+# Función genérica del sistema (acepta parámetros)
+# --------------------------------------------------
+def sistema_gen(t, y, m_p, k_p, b_p):
     dxdt = y[1]
-    dvdt = -(b / m) * y[1] - (k / m) * y[0]
+    dvdt = -(b_p / m_p) * y[1] - (k_p / m_p) * y[0]
     return [dxdt, dvdt]
 
+def simular(params, t_eval, t0, tf, ci):
+    """Integra el sistema con parámetros dados; devuelve x(t) o None si falla."""
+    m_p, k_p, b_p, x0_p, v0_p = params
+    try:
+        sol = solve_ivp(
+            lambda t, y: sistema_gen(t, y, m_p, k_p, b_p),
+            [t0, tf], [x0_p, v0_p],
+            method='RK45', t_eval=t_eval, dense_output=False,
+            rtol=1e-8, atol=1e-10
+        )
+        return sol.y[0] if sol.success else None
+    except Exception:
+        return None
 
 # --------------------------------------------------
-# procesamiento de vídeo
+# Adquisición de vídeo
 # --------------------------------------------------
-y1, y2 = 100, 500    # ROI en píxeles
+y1, y2 = 100, 500
 x1, x2 = 200, 400
-mm_px = 0.357142857  # mm por píxel (calibración)
-duration = 5         # segundos de adquisición
+mm_px  = 0.357142857
+duration = 5
 
 cap = cv.VideoCapture(0)
 if not cap.isOpened():
@@ -43,8 +55,7 @@ if not cap.isOpened():
     exit()
 time.sleep(2)
 
-t_vec = []
-x_vec = []
+t_vec, x_vec = [], []
 T0 = time.time()
 
 while True:
@@ -52,17 +63,12 @@ while True:
     if not ret:
         break
 
-    T = time.time() - T0
+    T   = time.time() - T0
     ROI = frame[y1:y2, x1:x2]
     hsv = cv.cvtColor(ROI, cv.COLOR_BGR2HSV)
 
-    Red_low1 = np.array([0, 100, 70])
-    Red_High1 = np.array([10, 255, 255])
-    Red_low2 = np.array([170, 100, 70])
-    Red_High2 = np.array([180, 255, 255])
-
-    mask1 = cv.inRange(hsv, Red_low1, Red_High1)
-    mask2 = cv.inRange(hsv, Red_low2, Red_High2)
+    mask1 = cv.inRange(hsv, np.array([0,   100, 70]),  np.array([10,  255, 255]))
+    mask2 = cv.inRange(hsv, np.array([170, 100, 70]),  np.array([180, 255, 255]))
     maskR = mask1 + mask2
 
     contours, _ = cv.findContours(maskR, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
@@ -87,74 +93,178 @@ cap.release()
 cv.destroyAllWindows()
 
 # --------------------------------------------------
-# análisis de los datos recogidos
+# Análisis y estimación de parámetros
 # --------------------------------------------------
+if len(t_vec) < 10:
+    print("No se detectaron suficientes datos.")
+    exit()
 
+t_vec = np.array(t_vec)
+x_vec = np.array(x_vec)
 
+# Convertir mm → m y quitar offset estático inicial
+x_exp = x_vec / 1000.0
+x_exp = x_exp - np.mean(x_exp[:10])
+t_exp = t_vec
 
-if len(t_vec) >= 2:
-    t_vec = np.array(t_vec)
-    x_vec = np.array(x_vec)
+# Tiempo de inicio (primer t ≠ 0)
+t_comienzo = next((t for t in t_exp if t != 0), t_exp[0])
 
-    # primero convierto a metros y luego quito el offset
-    x_exp = (x_vec / 1000.0)                      # mm → m
-    x_exp = x_exp - np.mean(x_exp[:10])          # anular la deriva inicial
-    t_exp = t_vec
+# Grid temporal común para comparación
+t_fin_real = min(t_exp[-1], t_fin)
+t_common   = np.linspace(t_comienzo, t_fin_real, num_puntos)
 
-    for i in t_exp:
-        if i!=0:
-            t_comienzo = i
-            break
+# Interpolar datos experimentales en el grid común
+x_exp_interp = np.interp(t_common, t_exp, x_exp)
 
+# Condiciones iniciales experimentales (para el ajuste)
+x0_exp = x_exp_interp[0]
+# Velocidad inicial estimada por diferencias finitas
+v0_exp = (x_exp_interp[1] - x_exp_interp[0]) / (t_common[1] - t_common[0]) \
+         if len(t_common) > 1 else 0.0
 
-    # cálculo del modelo (no depende de la cámara)
-    t_eval = np.linspace(t_comienzo, t_fin, num_puntos)
+print(f"\nCondiciones iniciales estimadas del experimento:")
+print(f"  x0 = {x0_exp*1000:.3f} mm   v0 = {v0_exp*1000:.3f} mm/s")
 
-    sol1 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'RK45', t_eval = t_eval ) # ode45
+# --------------------------------------------------
+# Función de costo: SSE entre simulado y experimental
+# --------------------------------------------------
+def costo(params):
+    m_p, k_p, b_p, x0_p, v0_p = params
+    # Restricciones físicas (barrera de penalización)
+    if m_p <= 0 or k_p <= 0 or b_p < 0:
+        return 1e12
+    x_sim = simular(params, t_common, t_comienzo, t_fin_real,
+                    ci=[x0_p, v0_p])
+    if x_sim is None:
+        return 1e12
+    return float(np.sum((x_sim - x_exp_interp) ** 2))
 
-    sol2 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'RK23', t_eval = t_eval ) # ode23
+# Punto de partida: parámetros nominales + CI experimentales
+p0 = [m, k, b, x0_exp, v0_exp]
 
-    sol3 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'BDF', t_eval = t_eval ) # ode 23s
+print("\nEstimando parámetros por mínimos cuadrados (Nelder-Mead)...")
+resultado = minimize(
+    costo, p0,
+    method='Nelder-Mead',
+    options={
+        'xatol': 1e-9,
+        'fatol': 1e-12,
+        'maxiter': 20_000,
+        'maxfev':  50_000,
+        'adaptive': True,   # Nelder-Mead adaptativo (mejor para ≥4 params)
+    }
+)
 
-    sol4 = solve_ivp(sistema, [t_comienzo, t_fin], [x0, v0], method = 'Radau', t_eval = t_eval ) # ode15s
+m_est, k_est, b_est, x0_est, v0_est = resultado.x
 
-    if not (sol1.success and sol2.success and sol3.success and sol4.success):
-        raise RuntimeError("Error en una o más integraciones numéricas.")
+# Métricas de calidad del ajuste
+x_sim_est = simular(resultado.x, t_common, t_comienzo, t_fin_real,
+                    ci=[x0_est, v0_est])
+SSE  = np.sum((x_sim_est - x_exp_interp) ** 2)
+RMSE = np.sqrt(SSE / len(x_exp_interp)) * 1000   # en mm
+SS_tot = np.sum((x_exp_interp - np.mean(x_exp_interp)) ** 2)
+R2   = 1 - SSE / SS_tot if SS_tot > 0 else np.nan
 
+print("\n--- Parámetros estimados ---")
+print(f"  m  = {m_est:.6f} kg   (nominal: {m:.4f})")
+print(f"  k  = {k_est:.4f} N/m  (nominal: {k:.1f})")
+print(f"  b  = {b_est:.6f} N·s/m (nominal: {b:.2f})")
+print(f"  x0 = {x0_est*1000:.3f} mm")
+print(f"  v0 = {v0_est*1000:.3f} mm/s")
+print(f"\n  RMSE = {RMSE:.4f} mm   |   R² = {R2:.6f}")
+print(f"  Convergencia: {resultado.message}")
 
-    # Crear figura con 2 filas y 2 columnas, compartiendo ejes X
-    fig, axes = plt.subplots(2, 2, figsize=(8, 6), sharex=True)
+# Frecuencia natural y razón de amortiguamiento estimados
+wn_est  = np.sqrt(k_est / m_est)
+zeta_est = b_est / (2 * np.sqrt(k_est * m_est))
+wn_nom  = np.sqrt(k / m)
+zeta_nom = b / (2 * np.sqrt(k * m))
+print(f"\n  ωn estimada = {wn_est:.3f} rad/s  (nominal: {wn_nom:.3f})")
+print(f"  ζ  estimada = {zeta_est:.5f}      (nominal: {zeta_nom:.5f})")
 
-    # Graficar en cada subplot
+# --------------------------------------------------
+# Simulaciones con parámetros ESTIMADOS y 4 métodos
+# --------------------------------------------------
+t_eval = np.linspace(t_comienzo, t_fin_real, num_puntos)
+ci_est = [x0_est, v0_est]
 
-    axes[0, 0].plot(t_exp, x_exp, 'blue')
-    axes[0, 0].plot(t_exp, sol1.y[0], 'red')
-    axes[0, 0].set_title("ode45")
-    axes[0, 0].xlabel("Tiempo")
-    axes[0, 0].ylabel("Posicion")
-    axes[0, 0].grid()
+def integrar_metodo(metodo):
+    sol = solve_ivp(
+        lambda t, y: sistema_gen(t, y, m_est, k_est, b_est),
+        [t_comienzo, t_fin_real], ci_est,
+        method=metodo, t_eval=t_eval,
+        rtol=1e-8, atol=1e-10
+    )
+    if not sol.success:
+        raise RuntimeError(f"Falla en {metodo}: {sol.message}")
+    return sol
 
-    axes[0, 1].plot(t_exp, x_exp, 'blue')
-    axes[0, 1].plot(t_exp, sol2.y[0], 'yellow')
-    axes[0, 1].set_title("ode23")
-    axes[0, 1].xlabel("Tiempo")
-    axes[0, 1].ylabel("Posicion")
-    axes[0, 1].grid()
+sol1 = integrar_metodo('RK45')    # ode45
+sol2 = integrar_metodo('RK23')    # ode23
+sol3 = integrar_metodo('BDF')     # ode23s
+sol4 = integrar_metodo('Radau')   # ode15s
 
-    axes[1, 0].plot(t_exp, x_exp, 'blue')
-    axes[1, 0].plot(t_exp, sol3.y[0], 'cyan')
-    axes[1, 0].set_title("ode23s")
-    axes[1, 0].xlabel("Tiempo")
-    axes[1, 0].ylabel("Posicion")
-    axes[1, 0].grid()
+# --------------------------------------------------
+# Figura 1: comparación de los 4 métodos
+# --------------------------------------------------
+fig1, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True, sharey=True)
+fig1.suptitle(
+    f"Parámetros estimados — m={m_est:.4f} kg  k={k_est:.2f} N/m  "
+    f"b={b_est:.4f} N·s/m\n"
+    f"ωn={wn_est:.2f} rad/s  ζ={zeta_est:.4f}  RMSE={RMSE:.4f} mm  R²={R2:.5f}",
+    fontsize=10
+)
 
-    axes[1, 1].plot(t_exp, x_exp, 'blue')
-    axes[1, 1].plot(t_exp, sol4.y[0], 'magenta')
-    axes[1, 1].set_title("ode15s")
-    axes[1, 1].xlabel("Tiempo")
-    axes[1, 1].ylabel("Posicion")
-    axes[1, 1].grid()
+configs = [
+    (axes[0, 0], sol1, 'tab:red',     'RK45 (ode45)'),
+    (axes[0, 1], sol2, 'tab:orange',  'RK23 (ode23)'),
+    (axes[1, 0], sol3, 'tab:cyan',    'BDF  (ode23s)'),
+    (axes[1, 1], sol4, 'tab:magenta', 'Radau (ode15s)'),
+]
 
+for ax, sol, color, titulo in configs:
+    ax.plot(t_common, x_exp_interp * 1000, 'b-',
+            linewidth=1.5, label='Experimental', zorder=3)
+    ax.plot(sol.t,    sol.y[0]       * 1000, color=color,
+            linewidth=1.5, linestyle='--', label=titulo, zorder=2)
+    ax.set_title(titulo, fontsize=10)
+    ax.set_xlabel("Tiempo (s)")
+    ax.set_ylabel("Posición (mm)")
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.4)
 
-else:
-    print('No se detectaron suficientes datos')
+fig1.tight_layout()
+
+# --------------------------------------------------
+# Figura 2: mejor ajuste superpuesto + residuos
+# --------------------------------------------------
+fig2, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
+                                       gridspec_kw={'height_ratios': [3, 1]})
+
+ax_top.plot(t_common, x_exp_interp * 1000, 'b-',
+            linewidth=2, label='Experimental', zorder=4)
+ax_top.plot(sol1.t, sol1.y[0] * 1000, 'r--',
+            linewidth=2, label=f'Simulado (RK45, mín. cuadrados)', zorder=3)
+ax_top.fill_between(
+    t_common,
+    (x_exp_interp - x_sim_est) * 1000,   # reuse later
+    0,
+    alpha=0,                              # invisible, solo reserva eje
+)
+ax_top.set_ylabel("Posición (mm)", fontsize=11)
+ax_top.set_title("Ajuste por mínimos cuadrados — Datos vs Simulación", fontsize=12)
+ax_top.legend(fontsize=10)
+ax_top.grid(True, alpha=0.4)
+
+residuos = (x_exp_interp - x_sim_est) * 1000   # mm
+ax_bot.plot(t_common, residuos, 'k-', linewidth=1)
+ax_bot.axhline(0, color='r', linewidth=0.8, linestyle='--')
+ax_bot.fill_between(t_common, residuos, 0, alpha=0.25, color='gray')
+ax_bot.set_ylabel("Residuo (mm)", fontsize=10)
+ax_bot.set_xlabel("Tiempo (s)", fontsize=11)
+ax_bot.set_title(f"Residuos  (RMSE = {RMSE:.4f} mm)", fontsize=10)
+ax_bot.grid(True, alpha=0.4)
+
+fig2.tight_layout()
+plt.show()

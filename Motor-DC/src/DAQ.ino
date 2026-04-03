@@ -62,6 +62,14 @@ float ina219_leerCorriente() {
   int16_t raw = (Wire.read() << 8) | Wire.read();
   return ((raw * LSB_SHUNT_uV) / 1e6) / R_SHUNT;  // Amperes
 }
+// Patrón PRBS fijo — tiempos en ms
+const uint32_t patron[] = {300, 150, 200, 100, 400, 120, 350};
+const int N_PATRON = 7;
+int idx_patron  = 0;
+bool motorON    = true;
+uint32_t tCambio = 0;
+
+
 
 // =============================================================================
 // ENCODER — ISR (las ISR del ESP32 corren en el núcleo que las registró)
@@ -170,5 +178,24 @@ void setup() {
 
 // loop() vacío — todo corre en las tareas FreeRTOS
 void loop() {
-  vTaskDelete(NULL);  // Eliminar tarea loop para liberar recursos
+  uint32_t tActual = millis();
+
+  // ── Conmutar motor según patrón ──────────────────────────
+  if (tActual - tCambio >= patron[idx_patron]) {
+    motorON = !motorON;
+    ledcWrite(LEDC_CANAL, motorON ? 255 : 0);
+    idx_patron = (idx_patron + 1) % N_PATRON;  // Ciclar patrón
+    tCambio = tActual;
+  }
+
+  // ── Voltaje real estimado desde PWM ─────────────────────
+  // V_real = (pwm/255) * V_fuente
+  float voltaje = motorON ? 12.0 : 0.0;
+
+  // Enviar: tiempo, voltaje, corriente, velocidad
+  Serial.printf("%lu,%.2f,%.4f,%.4f\n", 
+                tActual, voltaje, g_corriente, g_radps);
+
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+
 }
