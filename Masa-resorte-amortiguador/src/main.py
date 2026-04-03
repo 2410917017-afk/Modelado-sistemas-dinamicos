@@ -81,11 +81,11 @@ while True:
         t_vec.append(T)
         x_vec.append(pos_mm)
 
-        cv.rectangle(ROI, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv.putText(ROI, f"x={pos_mm:.2f} mm", (10, 30),
-                   cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        #cv.rectangle(ROI, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        #cv.putText(ROI, f"x={pos_mm:.2f} mm", (10, 30),
+        #           cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-    cv.imshow('ROI', ROI)
+    #cv.imshow('ROI', ROI)
     if (cv.waitKey(1) & 0xFF == ord('q')) or (T > duration):
         break
 
@@ -217,10 +217,10 @@ fig1.suptitle(
 )
 
 configs = [
-    (axes[0, 0], sol1, 'tab:red',     'RK45 (ode45)'),
-    (axes[0, 1], sol2, 'tab:orange',  'RK23 (ode23)'),
-    (axes[1, 0], sol3, 'tab:cyan',    'BDF  (ode23s)'),
-    (axes[1, 1], sol4, 'tab:magenta', 'Radau (ode15s)'),
+    (axes[0, 0], sol1, 'red',     'RK45 (ode45)'),
+    (axes[0, 1], sol2, 'orange',  'RK23 (ode23)'),
+    (axes[1, 0], sol3, 'cyan',    'BDF  (ode23s)'),
+    (axes[1, 1], sol4, 'magenta', 'Radau (ode15s)'),
 ]
 
 for ax, sol, color, titulo in configs:
@@ -235,36 +235,4 @@ for ax, sol, color, titulo in configs:
     ax.grid(True, alpha=0.4)
 
 fig1.tight_layout()
-
-# --------------------------------------------------
-# Figura 2: mejor ajuste superpuesto + residuos
-# --------------------------------------------------
-fig2, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
-                                       gridspec_kw={'height_ratios': [3, 1]})
-
-ax_top.plot(t_common, x_exp_interp * 1000, 'b-',
-            linewidth=2, label='Experimental', zorder=4)
-ax_top.plot(sol1.t, sol1.y[0] * 1000, 'r--',
-            linewidth=2, label=f'Simulado (RK45, mín. cuadrados)', zorder=3)
-ax_top.fill_between(
-    t_common,
-    (x_exp_interp - x_sim_est) * 1000,   # reuse later
-    0,
-    alpha=0,                              # invisible, solo reserva eje
-)
-ax_top.set_ylabel("Posición (mm)", fontsize=11)
-ax_top.set_title("Ajuste por mínimos cuadrados — Datos vs Simulación", fontsize=12)
-ax_top.legend(fontsize=10)
-ax_top.grid(True, alpha=0.4)
-
-residuos = (x_exp_interp - x_sim_est) * 1000   # mm
-ax_bot.plot(t_common, residuos, 'k-', linewidth=1)
-ax_bot.axhline(0, color='r', linewidth=0.8, linestyle='--')
-ax_bot.fill_between(t_common, residuos, 0, alpha=0.25, color='gray')
-ax_bot.set_ylabel("Residuo (mm)", fontsize=10)
-ax_bot.set_xlabel("Tiempo (s)", fontsize=11)
-ax_bot.set_title(f"Residuos  (RMSE = {RMSE:.4f} mm)", fontsize=10)
-ax_bot.grid(True, alpha=0.4)
-
-fig2.tight_layout()
 plt.show()
