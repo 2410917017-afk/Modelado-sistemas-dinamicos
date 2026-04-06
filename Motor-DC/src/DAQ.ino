@@ -1,3 +1,4 @@
+
 /*
  * DAQ Motor DC — ESP32 Dual Core
  * ────────────────────────────────────────────────────────────
@@ -15,7 +16,7 @@
 // =============================================================================
 const int PIN_ENCODER_A = 18;   // Encoder canal A
 const int PIN_ENCODER_B = 19;   // Encoder canal B
-const int PIN_MOTOR     = 15;   // PWM motor
+const int motorPin     = 15;   // PWM motor
 const int PPR           = 600;  // Pulsos por vuelta
 
 // I2C INA219
@@ -41,12 +42,21 @@ portMUX_TYPE mux_radps     = portMUX_INITIALIZER_UNLOCKED;
 // =============================================================================
 // INA219 — Lectura directa por registros (sin librería)
 // =============================================================================
-void ina219_escribir(uint8_t reg, uint16_t valor) {
-  Wire.beginTransmission(INA219_ADDR);
-  Wire.write(reg);
-  Wire.write((valor >> 8) & 0xFF);
-  Wire.write(valor & 0xFF);
-  Wire.endTransmission();
+void resetI2C() {
+  Wire.end();
+  delay(100);
+  Wire.begin(21, 22);
+}
+
+void recoverI2C() {
+  pinMode(22, OUTPUT); // SCL
+  for (int i = 0; i < 9; i++) {
+    digitalWrite(22, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(22, LOW);
+    delayMicroseconds(5);
+  }
+  Wire.begin(21, 22);
 }
 
 float ina219_leerCorriente() {
@@ -58,13 +68,7 @@ float ina219_leerCorriente() {
   return ((raw * LSB_SHUNT_uV) / 1e6) / R_SHUNT;  // Amperes
 }
 // Patrón PRBS fijo — tiempos en ms
-const uint32_t patron[] = {0, 255};
-const int N_PATRON = 2;
-int idx_patron  = 0;
-bool motorON    = true;
-uint32_t tCambio = 0;
-
-
+bool motorOn = false;
 
 // =============================================================================
 // ENCODER — ISR (las ISR del ESP32 corren en el núcleo que las registró)
@@ -89,15 +93,13 @@ void TaskSensores(void *pvParameters) {
 
   // Verificar que el INA219 responde
   Wire.beginTransmission(INA219_ADDR);
-  if (Wire.endTransmission() != 0) {
-    Serial.println("ERROR_INA219");
-    vTaskDelete(NULL);
-    return;
-  }
 
-  // Configurar INA219: modo continuo, 12-bit, sin promedio
-  ina219_escribir(0x00, 0x399F);
-  ina219_escribir(0x05, 4096);  // Calibración para Imax ~3.2A con R=0.1Ω
+  if (!Wire.begin()) {
+    Serial.println("Error INA219");
+    resetI2C();
+    vTaskDelete(NULL);
+    recoverI2C();
+  }
 
   Serial.println("LISTO");
 
@@ -160,7 +162,7 @@ void setup() {
   Serial.begin(115200);
 
   // PWM del motor con LEDC (reemplaza analogWrite en ESP32)
-  analogWrite(PIN_MOTOR, 255);
+  digitalWrite(motorPin, 0);
 
   pinMode(PIN_ENCODER_A, INPUT_PULLUP);
   pinMode(PIN_ENCODER_B, INPUT_PULLUP);
@@ -174,18 +176,28 @@ void setup() {
 // loop() vacío — todo corre en las tareas FreeRTOS
 void loop() {
   uint32_t tActual = millis();
+  uint32_t tAnterior = 0;
 
   // ── Conmutar motor según patrón ──────────────────────────
-  if (tActual - tCambio >= patron[idx_patron]) {
-    motorON = !motorON;
-    analogWrite(PIN_MOTOR, motorON ? 255 : 0);
-    idx_patron = (idx_patron + 1) % N_PATRON;  // Ciclar patrón
-    tCambio = tActual;
+  if (motorOn) {
+    // Si el motor está encendido, verificamos si ya pasó el tiempoOn
+    if (tActual - tAnterior >= 1000) {
+      motorOn = false;
+      digitalWrite(motorPin, LOW); // Apagar motor
+      tAnterior = tActual; // Reiniciar contador
+    }
+  } else {
+    // Si el motor está apagado, verificamos si ya pasó el tiempoOff
+    if (tActual - tAnterior >= 1000) {
+      motorOn = true;
+      digitalWrite(motorPin, HIGH); // Encender motor
+      tAnterior = tActual; // Reiniciar contador
+    }
   }
 
   // ── Voltaje real estimado desde PWM ─────────────────────
   // V_real = (pwm/255) * V_fuente
-  float voltaje = motorON ? 12.0 : 0.0;
+  float voltaje = motorOn ? 12.0 : 0.0;
 
   // Enviar: tiempo, voltaje, corriente, velocidad
   Serial.printf("%lu,%.2f,%.4f,%.4f\n", 
