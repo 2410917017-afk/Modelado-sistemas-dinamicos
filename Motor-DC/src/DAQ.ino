@@ -15,13 +15,8 @@
 // =============================================================================
 const int PIN_ENCODER_A = 18;   // Encoder canal A
 const int PIN_ENCODER_B = 19;   // Encoder canal B
-const int PIN_MOTOR     = 5;   // PWM motor
+const int PIN_MOTOR     = 15;   // PWM motor
 const int PPR           = 600;  // Pulsos por vuelta
-
-// PWM motor (LEDC del ESP32)
-const int LEDC_CANAL    = 0;
-const int LEDC_FREQ     = 5000;  // 5 kHz
-const int LEDC_BITS     = 8;     // Resolución 8 bits (0-255)
 
 // I2C INA219
 const uint8_t INA219_ADDR  = 0x40;
@@ -63,8 +58,8 @@ float ina219_leerCorriente() {
   return ((raw * LSB_SHUNT_uV) / 1e6) / R_SHUNT;  // Amperes
 }
 // Patrón PRBS fijo — tiempos en ms
-const uint32_t patron[] = {300, 150, 200, 100, 400, 120, 350};
-const int N_PATRON = 7;
+const uint32_t patron[] = {0, 255};
+const int N_PATRON = 2;
 int idx_patron  = 0;
 bool motorON    = true;
 uint32_t tCambio = 0;
@@ -90,7 +85,7 @@ void IRAM_ATTR encoderISR() {
 // =============================================================================
 void TaskSensores(void *pvParameters) {
   Wire.begin(21, 22);    // SDA=GPIO21, SCL=GPIO22 (pines estándar ESP32)
-  Wire.setClock(400000); // Fast mode 400 kHz
+  Wire.setClock(100000); // Fast mode 400 kHz
 
   // Verificar que el INA219 responde
   Wire.beginTransmission(INA219_ADDR);
@@ -183,7 +178,7 @@ void loop() {
   // ── Conmutar motor según patrón ──────────────────────────
   if (tActual - tCambio >= patron[idx_patron]) {
     motorON = !motorON;
-    ledcWrite(LEDC_CANAL, motorON ? 255 : 0);
+    analogWrite(PIN_MOTOR, motorON ? 255 : 0);
     idx_patron = (idx_patron + 1) % N_PATRON;  // Ciclar patrón
     tCambio = tActual;
   }
