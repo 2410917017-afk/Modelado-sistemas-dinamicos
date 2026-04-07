@@ -9,7 +9,6 @@
 
 #include "Wire.h"
 #include "WiFi.h"
-#include "driver/ledc.h"  // PWM del ESP32
 
 // =============================================================================
 // CONFIGURACIÓN
@@ -67,8 +66,11 @@ float ina219_leerCorriente() {
   int16_t raw = (Wire.read() << 8) | Wire.read();
   return ((raw * LSB_SHUNT_uV) / 1e6) / R_SHUNT;  // Amperes
 }
-// Patrón PRBS fijo — tiempos en ms
-bool motorOn = false;
+// =============================================================================
+// ESTADO DEL MOTOR
+// =============================================================================
+volatile bool g_motorOn = false;
+portMUX_TYPE mux_motorOn = portMUX_INITIALIZER_UNLOCKED;
 
 // =============================================================================
 // ENCODER — ISR (las ISR del ESP32 corren en el núcleo que las registró)
@@ -88,17 +90,18 @@ void IRAM_ATTR encoderISR() {
 // TAREA NÚCLEO 0 — Lectura INA219 + Envío Serial
 // =============================================================================
 void TaskSensores(void *pvParameters) {
-  Wire.begin(21, 22);    // SDA=GPIO21, SCL=GPIO22 (pines estándar ESP32)
-  Wire.setClock(100000); // Fast mode 400 kHz
+  Wire.begin(21, 22);
+  Wire.setClock(100000);  // Fast mode real 400 kHz
 
-  // Verificar que el INA219 responde
+  // Verificar presencia del INA219
   Wire.beginTransmission(INA219_ADDR);
-
-  if (!Wire.begin()) {
-    Serial.println("Error INA219");
+  uint8_t err = Wire.endTransmission();
+  if (err != 0) {
+    Serial.printf("INA219 no encontrado (error %d)\n", err);
     resetI2C();
-    vTaskDelete(NULL);
     recoverI2C();
+    vTaskDelete(NULL);
+    return;
   }
 
   Serial.println("LISTO");
@@ -115,10 +118,17 @@ void TaskSensores(void *pvParameters) {
     radps_local = g_radps;
     portEXIT_CRITICAL(&mux_radps);
 
-    // Un solo printf es más rápido que múltiples Serial.print
-    Serial.printf("%lu,%.4f,%.4f\n", millis(), corriente, radps_local);
+    bool motorOn_local;
+    portENTER_CRITICAL(&mux_motorOn);
+    motorOn_local = g_motorOn;
+    portEXIT_CRITICAL(&mux_motorOn);
 
-    vTaskDelay(1 / portTICK_PERIOD_MS);  // Cede CPU, evita WDT
+    float voltaje = motorOn_local ? 12.0 : 0.0;
+
+    Serial.printf("%lu,%.2f,%.4f,%.4f\n",
+                  millis(), voltaje, corriente, radps_local);
+
+    vTaskDelay(1 / portTICK_PERIOD_MS);
   }
 }
 
@@ -153,6 +163,39 @@ void TaskVelocidad(void *pvParameters) {
 }
 
 // =============================================================================
+// TAREA NÚCLEO 1 — Conmutación del motor (cada 1 segundo)
+// =============================================================================
+void TaskMotor(void *pvParameters) {
+  uint32_t tAnterior = millis();
+  bool estado = false;
+
+  for (;;) {
+    uint32_t tActual = millis();
+
+    // Cambiar estado cada 1000 ms
+    if (tActual - tAnterior >= 1000) {
+      estado = !estado;
+      
+      // Actualizar variable compartida
+      portENTER_CRITICAL(&mux_motorOn);
+      g_motorOn = estado;
+      portEXIT_CRITICAL(&mux_motorOn);
+
+      // Cambiar GPIO del motor
+      if (estado) {
+        digitalWrite(motorPin, HIGH);  // Encender
+      } else {
+        digitalWrite(motorPin, LOW);   // Apagar
+      }
+
+      tAnterior = tActual;
+    }
+
+    vTaskDelay(10 / portTICK_PERIOD_MS);  // Verificar cada 10 ms
+  }
+}
+
+// =============================================================================
 // SETUP
 // =============================================================================
 void setup() {
@@ -161,48 +204,23 @@ void setup() {
 
   Serial.begin(115200);
 
-  // PWM del motor con LEDC (reemplaza analogWrite en ESP32)
-  digitalWrite(motorPin, 0);
+  // Configurar GPIO del motor como salida
+  pinMode(motorPin, OUTPUT);
+  digitalWrite(motorPin, LOW);  // Inicialmente apagado
 
+  // Configurar encoder
   pinMode(PIN_ENCODER_A, INPUT_PULLUP);
   pinMode(PIN_ENCODER_B, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_A), encoderISR, RISING);
 
+  // Crear tareas FreeRTOS
   //                     Nombre       Stack   Param  Prior  Handle  Núcleo
   xTaskCreatePinnedToCore(TaskSensores,  "I2C+TX",  4096, NULL, 2, NULL, 0);
   xTaskCreatePinnedToCore(TaskVelocidad, "Encoder", 2048, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(TaskMotor,     "Motor",   2048, NULL, 1, NULL, 1);
 }
 
 // loop() vacío — todo corre en las tareas FreeRTOS
 void loop() {
-  uint32_t tActual = millis();
-  uint32_t tAnterior = 0;
-
-  // ── Conmutar motor según patrón ──────────────────────────
-  if (motorOn) {
-    // Si el motor está encendido, verificamos si ya pasó el tiempoOn
-    if (tActual - tAnterior >= 1000) {
-      motorOn = false;
-      digitalWrite(motorPin, LOW); // Apagar motor
-      tAnterior = tActual; // Reiniciar contador
-    }
-  } else {
-    // Si el motor está apagado, verificamos si ya pasó el tiempoOff
-    if (tActual - tAnterior >= 1000) {
-      motorOn = true;
-      digitalWrite(motorPin, HIGH); // Encender motor
-      tAnterior = tActual; // Reiniciar contador
-    }
-  }
-
-  // ── Voltaje real estimado desde PWM ─────────────────────
-  // V_real = (pwm/255) * V_fuente
-  float voltaje = motorOn ? 12.0 : 0.0;
-
-  // Enviar: tiempo, voltaje, corriente, velocidad
-  Serial.printf("%lu,%.2f,%.4f,%.4f\n", 
-                tActual, voltaje, g_corriente, g_radps);
-
-  vTaskDelay(1 / portTICK_PERIOD_MS);
-
+  vTaskDelay(portMAX_DELAY);  // No hacer nada
 }
