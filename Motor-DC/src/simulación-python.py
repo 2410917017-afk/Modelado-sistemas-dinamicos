@@ -123,37 +123,69 @@ for k, v in params.items():
 # =============================================================================
 # SIMULACIÓN DEL MOTOR CON 4 MÉTODOS NUMÉRICOS
 # =============================================================================
-def simular_motor(params, t_eval, V=12.0):
+def simular_motor(params, t_eval, t_data, v_data):
     R  = params["R_a (Ohm)"]
     L  = max(params["L_a (H)"], 1e-6)
     Ke = params["K_e (V·s/rad)"]
     J  = params["J (kg·m²)"]
     B  = params["B (N·m·s/rad)"]
 
-    def odes(t, x):
-        i_s, w_s = x
-        di = (V - R * i_s - Ke * w_s) / L
-        dw = (Ke * i_s - B * w_s) / J
-        return [di, dw]
+    # ── v(t) real interpolado — el solver lo evaluará en sus pasos internos ──
+    # np.interp es O(log n) con búsqueda binaria → no penaliza el rendimiento
+    def V_interp(t_actual):
+        return np.interp(t_actual, t_data, v_data)
+
+    def odes(t_actual, x):
+        V = V_interp(t_actual)      # <── voltaje real en ese instante
+        return [(V - R*x[0] - Ke*x[1]) / L,
+                (Ke*x[0]  -  B*x[1]) / J]
+
+    # Jacobiano sigue siendo el mismo — no depende de V
+    jac = np.array([[-R/L,  -Ke/L],
+                    [ Ke/J,  -B/J]])
+    jac_fn = lambda t_actual, x: jac
+
+    tspan   = (t_eval[0], t_eval[-1])
+    dur     = tspan[1] - tspan[0]
+
+    configs = {
+        'RK45' : dict(method='RK45',  jac=None,   rtol=1e-4, atol=1e-6,
+                      max_step=dur/300),
+        'RK23' : dict(method='RK23',  jac=None,   rtol=1e-4, atol=1e-6,
+                      max_step=dur/300),
+        'BDF'  : dict(method='BDF',   jac=jac_fn, rtol=1e-6, atol=1e-8,
+                      max_step=dur/100),
+        'Radau': dict(method='Radau', jac=jac_fn, rtol=1e-6, atol=1e-8,
+                      max_step=dur/100),
+    }
 
     resultados = {}
-    for metodo in ['RK45', 'RK23', 'BDF', 'Radau']:
-        sol = solve_ivp(odes, [t_eval[0], t_eval[-1]], [0, 0],
-                        method=metodo, t_eval=t_eval)
-        if sol.success:
-            resultados[metodo] = (sol.y[0], sol.y[1])
-        else:
-            print(f"⚠ {metodo} no convergió.")
+    tiempos    = {}
 
-    return resultados
+    for nombre, cfg in configs.items():
+        t0  = time.perf_counter()
+        sol = solve_ivp(odes, tspan, [0.0, 0.0],
+                        t_eval=t_eval,
+                        dense_output=False,
+                        **cfg)
+        elapsed = time.perf_counter() - t0
+
+        if sol.success:
+            resultados[nombre] = (sol.y[0], sol.y[1])
+            tiempos[nombre]    = elapsed
+            print(f"  {nombre:6s} ✓  {elapsed*1000:6.1f} ms  |  pasos={sol.t.size}")
+        else:
+            print(f"  {nombre:6s} ✗  {sol.message}")
+
+    return resultados, tiempos
 
 t_sim = np.linspace(t[0], t[-1], 500)
-sims  = simular_motor(params, t_sim, VOLT)
+resultados, tiempos = simular_motor(params, t_sim, t, vnp)
 
 # =============================================================================
 # VISUALIZACIÓN
 # =============================================================================
-metodos  = list(sims.keys())
+metodos  = list(resultados.keys())
 i_raw_interp  = np.interp(t_sim, t, i)
 w_raw_interp  = np.interp(t_sim, t, w)
 i_sg_interp   = np.interp(t_sim, t, i_suave)
@@ -162,7 +194,7 @@ w_sg_interp   = np.interp(t_sim, t, w_suave)
 fig, axes = plt.subplots(2, len(metodos), figsize=(16, 7), sharex=True)
 
 for col, metodo in enumerate(metodos):
-    i_sim, w_sim = sims[metodo]
+    i_sim, w_sim = resultados[metodo]
 
     # --- Corriente ---
     ax = axes[0, col]
