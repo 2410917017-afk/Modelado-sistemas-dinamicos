@@ -11,17 +11,17 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from scipy.signal import savgol_filter
 
-# =============================================================================
+
 # CONFIGURACIÓN
-# =============================================================================
-PORT   = 'COM7'
+
+PORT   = 'COM11'
 BAUD   = 115200
 T_FIN  = 2.0   # segundos de captura
 VOLT   = 12.0  # voltaje aplicado (V)
 
-# =============================================================================
+
 # ADQUISICIÓN DE DATOS
-# =============================================================================
+
 t_raw, i_raw, w_raw, v_raw = [], [], [], []
 
 print("Conectando a Arduino...")
@@ -60,17 +60,17 @@ i = np.array(i_raw)
 w = np.array(w_raw)
 vnp = np.array(v_raw)
 
-# =============================================================================
+
 # ANÁLISIS DE MUESTREO
-# =============================================================================
+
 dt   = np.diff(t)
 fs   = 1.0 / np.mean(dt)
 print(f"\nFs promedio : {fs:.1f} Hz  |  Ts promedio : {np.mean(dt)*1000:.2f} ms")
 print(f"Variación Ts: {np.std(dt)/np.mean(dt)*100:.1f}%")
 
-# =============================================================================
+
 # ESTIMACIÓN DE PARÁMETROS — Nivel 1: Savitzky-Golay
-# =============================================================================
+
 def estimar_params(t, v, i, w):
     """
     Mínimos cuadrados con derivadas calculadas via Savitzky-Golay.
@@ -120,9 +120,9 @@ print("\nParámetros estimados (Savitzky-Golay):")
 for k, v in params.items():
     print(f"  {k}: {v:.6f}")
 
-# =============================================================================
+
 # SIMULACIÓN DEL MOTOR CON 4 MÉTODOS NUMÉRICOS
-# =============================================================================
+
 def simular_motor(params, t_eval, t_data, v_data):
     R  = params["R_a (Ohm)"]
     L  = max(params["L_a (H)"], 1e-6)
@@ -182,9 +182,9 @@ def simular_motor(params, t_eval, t_data, v_data):
 t_sim = np.linspace(t[0], t[-1], 500)
 resultados, tiempos = simular_motor(params, t_sim, t, vnp)
 
-# =============================================================================
+
 # VISUALIZACIÓN
-# =============================================================================
+
 metodos  = list(resultados.keys())
 i_raw_interp  = np.interp(t_sim, t, i)
 w_raw_interp  = np.interp(t_sim, t, w)
