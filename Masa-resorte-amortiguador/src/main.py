@@ -13,8 +13,9 @@ m = 0.1739      # masa (kg)
 k = 750.0       # constante del resorte (N/m)
 b = 2.5         # fricción (N·s/m)
 
-x0 = -0.01      # desplazamiento inicial (m)
-v0 = 0.0        # velocidad inicial (m/s)
+# Condiciones iniciales (AJUSTA ESTAS MANUALMENTE según tu experimento)
+x0_manual = -0.01      # desplazamiento inicial (m)
+v0_manual = 0.0        # velocidad inicial (m/s)
 
 t_fin = 2.0
 num_puntos = 500
@@ -104,27 +105,34 @@ x_vec = np.array(x_vec)
 
 # Convertir mm → m y quitar offset estático inicial
 x_exp = x_vec / 1000.0
-x_exp = x_exp - np.mean(x_exp[:10])
+x_offset = np.mean(x_exp[:min(10, len(x_exp))])
+x_exp = x_exp - x_offset
 t_exp = t_vec
 
-# Tiempo de inicio (primer t ≠ 0)
-t_comienzo = next((t for t in t_exp if t != 0), t_exp[0])
+# --------------------------------------------------
+# Detección automática del inicio del movimiento
+# --------------------------------------------------
+# Calcula la velocidad numérica (derivada)
+velocidad_num = np.gradient(x_exp, t_exp)
 
-# Grid temporal común para comparación
+# Umbral de movimiento: media + 3*std de los primeros puntos "estáticos"
+umbral_velocidad = 3.0 * np.std(velocidad_num[:min(20, len(velocidad_num))])
+
+# Busca el primer índice donde |velocidad| supera el umbral
+idx_inicio = np.argmax(np.abs(velocidad_num) > umbral_velocidad)
+if np.abs(velocidad_num[idx_inicio]) <= umbral_velocidad:
+    # Si no hay movimiento detectado, usa los primeros datos
+    idx_inicio = 0
+
+t_comienzo = t_exp[idx_inicio]
+print(f"\n✓ Movimiento detectado en t = {t_comienzo:.3f} s (índice {idx_inicio})")
+
+# Grid temporal común para comparación (desde el movimiento detectado)
 t_fin_real = min(t_exp[-1], t_fin)
 t_common   = np.linspace(t_comienzo, t_fin_real, num_puntos)
 
 # Interpolar datos experimentales en el grid común
 x_exp_interp = np.interp(t_common, t_exp, x_exp)
-
-# Condiciones iniciales experimentales (para el ajuste)
-x0_exp = x_exp_interp[0]
-# Velocidad inicial estimada por diferencias finitas
-v0_exp = (x_exp_interp[1] - x_exp_interp[0]) / (t_common[1] - t_common[0]) \
-         if len(t_common) > 1 else 0.0
-
-print(f"\nCondiciones iniciales estimadas del experimento:")
-print(f"  x0 = {x0_exp*1000:.3f} mm   v0 = {v0_exp*1000:.3f} mm/s")
 
 # --------------------------------------------------
 # Función de costo: SSE entre simulado y experimental
@@ -140,8 +148,8 @@ def costo(params):
         return 1e12
     return float(np.sum((x_sim - x_exp_interp) ** 2))
 
-# Punto de partida: parámetros nominales + CI experimentales
-p0 = [m, k, b, x0_exp, v0_exp]
+# Punto de partida: parámetros nominales + CI manuales
+p0 = [m, k, b, x0_manual, v0_manual]
 
 print("\nEstimando parámetros por mínimos cuadrados (Nelder-Mead)...")
 resultado = minimize(
