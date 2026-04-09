@@ -13,12 +13,15 @@ m = 0.1739      # masa (kg)
 k = 750.0       # constante del resorte (N/m)
 b = 2.5         # fricción (N·s/m)
 
-# Condiciones iniciales (AJUSTA ESTAS MANUALMENTE según tu experimento)
-x0_manual = -0.01      # desplazamiento inicial (m)
+# Condiciones iniciales 
+x0_manual = 0.025      # desplazamiento inicial (m)
 v0_manual = 0.0        # velocidad inicial (m/s)
 
-t_fin = 2.0
-num_puntos = 500
+t_fin = 5.0
+num_puntos = 1000
+
+contador = 0
+offset = 0
 
 # --------------------------------------------------
 # Función genérica del sistema (acepta parámetros)
@@ -65,7 +68,7 @@ while True:
         break
 
     T   = time.time() - T0
-    ROI = frame[y1:y2, x1:x2]
+    ROI = frame #frame[y1:y2, x1:x2]
     hsv = cv.cvtColor(ROI, cv.COLOR_BGR2HSV)
 
     mask1 = cv.inRange(hsv, np.array([0,   100, 70]),  np.array([10,  255, 255]))
@@ -76,19 +79,27 @@ while True:
     if contours:
         contour = max(contours, key=cv.contourArea)
         x, y, w, h = cv.boundingRect(contour)
-        pos_px = y + h
+        pos_px = y + h/2  # Centro vertical del rectángulo (masa puntual)
         pos_mm = pos_px * mm_px
 
-        t_vec.append(T)
-        x_vec.append(pos_mm)
+        if contador == 3:
+            offset = pos_mm
+
+        pos_mm = pos_mm - offset
+
+        if contador> 3:
+            t_vec.append(T)
+            x_vec.append(pos_mm)
 
         #cv.rectangle(ROI, (x, y), (x + w, y + h), (0, 255, 0), 2)
         #cv.putText(ROI, f"x={pos_mm:.2f} mm", (10, 30),
         #           cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
+    contador += 1
+    
     #cv.imshow('ROI', ROI)
     if (cv.waitKey(1) & 0xFF == ord('q')) or (T > duration):
-        break
+        break 
 
 cap.release()
 cv.destroyAllWindows()
@@ -103,9 +114,9 @@ if len(t_vec) < 10:
 t_vec = np.array(t_vec)
 x_vec = np.array(x_vec)
 
-# Convertir mm → m y quitar offset estático inicial
+# Convertir mm → m y setear offset en la primera posición detectada
 x_exp = x_vec / 1000.0
-x_offset = np.mean(x_exp[:min(10, len(x_exp))])
+x_offset = x_exp[0]  # Primera posición como referencia (cero)
 x_exp = x_exp - x_offset
 t_exp = t_vec
 
