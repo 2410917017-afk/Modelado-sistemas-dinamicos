@@ -18,6 +18,8 @@ const int PIN_ENCODER_B = 19;   // Encoder canal B
 const int motorPin     = 15;   // PWM motor
 const int PPR           = 600;  // Pulsos por vuelta
 
+bool inicio = true;
+
 // I2C INA219
 const uint8_t INA219_ADDR  = 0x40;
 const float   R_SHUNT      = 0.1;   // Ohms
@@ -25,6 +27,8 @@ const float   LSB_SHUNT_uV = 10.0;  // µV por bit
 
 // Intervalo de cálculo de velocidad
 const uint32_t T_VELOCIDAD_MS = 20;  // ms
+
+uint32_t tInicio = 0;
 
 // =============================================================================
 // VARIABLES COMPARTIDAS ENTRE NÚCLEOS
@@ -166,33 +170,22 @@ void TaskVelocidad(void *pvParameters) {
 // TAREA NÚCLEO 1 — Conmutación del motor (cada 1 segundo)
 // =============================================================================
 void TaskMotor(void *pvParameters) {
-  uint32_t tAnterior = millis();
-  bool estado = false;
-
-  for (;;) {
-    uint32_t tActual = millis();
-
-    // Cambiar estado cada 1000 ms
-    if (tActual - tAnterior >= 1000) {
-      estado = !estado;
-      
-      // Actualizar variable compartida
-      portENTER_CRITICAL(&mux_motorOn);
-      g_motorOn = estado;
-      portEXIT_CRITICAL(&mux_motorOn);
-
-      // Cambiar GPIO del motor
-      if (estado) {
-        digitalWrite(motorPin, HIGH);  // Encender
-      } else {
-        digitalWrite(motorPin, LOW);   // Apagar
-      }
-
-      tAnterior = tActual;
-    }
-
-    vTaskDelay(10 / portTICK_PERIOD_MS);  // Verificar cada 10 ms
+  // Esperar handshake del PC (el script Python envía un byte al abrir el puerto)
+  while (Serial.available() == 0) {
+    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
+  Serial.read(); // Consumir el byte
+
+  // Ahora sí esperar 1 segundo
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+  digitalWrite(motorPin, HIGH);
+  portENTER_CRITICAL(&mux_motorOn);
+  g_motorOn = true;
+  portEXIT_CRITICAL(&mux_motorOn);
+
+  // Tarea terminó su trabajo
+  vTaskDelete(NULL);
 }
 
 // =============================================================================

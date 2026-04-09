@@ -33,6 +33,7 @@ print(f"Recolectando {T_FIN}s de datos (desde el arranque)...")
 t0 = time.time()
 while time.time() - t0 < T_FIN:
     try:
+        arduino.write(b'\x01')
         line = arduino.readline().decode('utf-8', errors='ignore').strip()
         parts = line.split(',')
         if len(parts) == 4:
