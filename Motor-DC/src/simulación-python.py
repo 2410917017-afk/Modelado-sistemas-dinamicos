@@ -72,7 +72,7 @@ print(f"Variación Ts: {np.std(dt)/np.mean(dt)*100:.1f}%")
 
 # ESTIMACIÓN DE PARÁMETROS — Nivel 1: Savitzky-Golay
 
-def estimar_params(t, v, i, w):
+def estimar_params(t, i, w):
     """
     Mínimos cuadrados con derivadas calculadas via Savitzky-Golay.
     - No descarta el transitorio (es donde J y L son identificables).
@@ -116,7 +116,7 @@ def estimar_params(t, v, i, w):
     # Devolver señales suavizadas para graficarlas aparte
     return params, i_sg, w_sg
 
-params, i_suave, w_suave = estimar_params(t, i, w, VOLT)
+params, i_suave, w_suave = estimar_params(t, i, w)
 print("\nParámetros estimados (Savitzky-Golay):")
 for k, v in params.items():
     print(f"  {k}: {v:.6f}")
