@@ -106,12 +106,12 @@ def estimar_params(t, i, w):
     J, B  = np.linalg.lstsq(A_mec, abs(Ke) * i_sg, rcond=None)[0]
 
     params = {
-        "R_a (Ohm)"     : abs(np.clip(R,  0.1,  100 )),
-        "L_a (H)"       : abs(np.clip(L,  1e-6, 1   )),
-        "K_e (V·s/rad)" : abs(np.clip(Ke, 0.001, 1  )),
-        "K_t (N·m/A)"   : abs(np.clip(Ke, 0.001, 1  )),
-        "J (kg·m²)"     : abs(np.clip(J,  1e-6, 1   )),
-        "B (N·m·s/rad)" : abs(np.clip(B,  1e-6, 1   )),
+        "R_a (Ohm)"     : abs(np.clip(R,  0.1,   50  )),
+        "L_a (H)"       : abs(np.clip(L,  1e-4, 0.1 )),
+        "K_e (V·s/rad)" : abs(np.clip(Ke, 0.01, 0.5 )),
+        "K_t (N·m/A)"   : abs(np.clip(Ke, 0.01, 0.5 )),
+        "J (kg·m²)"     : abs(np.clip(J,  1e-5, 0.1 )),
+        "B (N·m·s/rad)" : abs(np.clip(B,  1e-5, 0.1 )),
     }
     # Devolver señales suavizadas para graficarlas aparte
     return params, i_sg, w_sg
@@ -126,9 +126,9 @@ for k, v in params.items():
 
 def simular_motor(params, t_eval, t_data, v_data):
     R  = params["R_a (Ohm)"]
-    L  = max(params["L_a (H)"], 1e-6)
+    L  = max(params["L_a (H)"], 1e-4)  # Protección adicional contra L muy pequeño
     Ke = params["K_e (V·s/rad)"]
-    J  = params["J (kg·m²)"]
+    J  = max(params["J (kg·m²)"], 1e-5)  # Protección: J mínimo
     B  = params["B (N·m·s/rad)"]
 
     # ── v(t) real interpolado — el solver lo evaluará en sus pasos internos ──
@@ -150,14 +150,14 @@ def simular_motor(params, t_eval, t_data, v_data):
     dur     = tspan[1] - tspan[0]
 
     configs = {
-        'RK45' : dict(method='RK45',  jac=None,   rtol=1e-4, atol=1e-6,
-                      max_step=dur/300),
-        'RK23' : dict(method='RK23',  jac=None,   rtol=1e-4, atol=1e-6,
-                      max_step=dur/300),
-        'BDF'  : dict(method='BDF',   jac=jac_fn, rtol=1e-6, atol=1e-8,
+        'RK45' : dict(method='RK45',                rtol=5e-3, atol=1e-4,
                       max_step=dur/100),
-        'Radau': dict(method='Radau', jac=jac_fn, rtol=1e-6, atol=1e-8,
+        'RK23' : dict(method='RK23',                rtol=5e-3, atol=1e-4,
                       max_step=dur/100),
+        'BDF'  : dict(method='BDF',   jac=jac_fn, rtol=1e-3, atol=1e-5,
+                      max_step=dur/50),
+        'Radau': dict(method='Radau', jac=jac_fn, rtol=1e-3, atol=1e-5,
+                      max_step=dur/50),
     }
 
     resultados = {}
