@@ -193,6 +193,14 @@ i_sg_interp   = np.interp(t_sim, t, i_suave)
 w_sg_interp   = np.interp(t_sim, t, w_suave)
 
 fig, axes = plt.subplots(2, len(metodos), figsize=(16, 7), sharex=True)
+fig.suptitle(
+    f"Motor DC — Raw / Filtrado / Simulación  |  "
+    f"Fs={fs:.1f} Hz  |  N={len(t)} muestras\n"
+    f"Parámetros estimados — R={params["R_a (Ohm)"]} Ohm  L={params["L_a (H)"]} H"
+    f"  K={params["K_e (V·s/rad)"]}  J={params["J (kg·m²)"]} (kg·m²)"
+    f"  B={params["B (N·m·s/rad)"]} (N·m·s/rad)",
+    fontweight='bold', fontsize=10
+)
 
 for col, metodo in enumerate(metodos):
     i_sim, w_sim = resultados[metodo]
@@ -200,27 +208,22 @@ for col, metodo in enumerate(metodos):
     # --- Corriente ---
     ax = axes[0, col]
     ax.plot(t_sim, i_raw_interp, color='steelblue', lw=1,   alpha=0.35, label='Raw')
-    ax.plot(t_sim, i_sg_interp,  color='steelblue', lw=2,   alpha=0.9,  label='SG filtrado')
-    ax.plot(t_sim, i_sim,        color='tomato',    lw=1.5, ls='--',    label='Simulado')
-    ax.set_title(metodo, fontweight='bold')
+    ax.plot(t_sim, i_sg_interp,  color='steelblue', lw=2,   alpha=0.9,  label='Filtrado')
+    ax.plot(t_sim, i_sim,        color='tomato',    lw=1.5, ls='--',    label=metodo)
+    ax.set_title(metodo)
     ax.set_ylabel("Corriente (A)")
     ax.legend(fontsize=8)
-    ax.grid(alpha=0.3)
+    ax.grid(alpha=0.4)
 
     # --- Velocidad ---
     ax = axes[1, col]
     ax.plot(t_sim, w_raw_interp, color='seagreen', lw=1,   alpha=0.35, label='Raw')
-    ax.plot(t_sim, w_sg_interp,  color='seagreen', lw=2,   alpha=0.9,  label='SG filtrado')
-    ax.plot(t_sim, w_sim,        color='tomato',   lw=1.5, ls='--',    label='Simulado')
+    ax.plot(t_sim, w_sg_interp,  color='seagreen', lw=2,   alpha=0.9,  label='Filtrado')
+    ax.plot(t_sim, w_sim,        color='tomato',   lw=1.5, ls='--',    label=metodo)
     ax.set_ylabel("Velocidad (rad/s)")
     ax.set_xlabel("Tiempo (s)")
     ax.legend(fontsize=8)
-    ax.grid(alpha=0.3)
+    ax.grid(alpha=0.4)
 
-fig.suptitle(
-    f"Motor DC — Raw / SG filtrado / Simulación  |  "
-    f"Fs={fs:.1f} Hz  |  N={len(t)} muestras",
-    fontweight='bold', fontsize=12
-)
 fig.tight_layout()
 plt.show()

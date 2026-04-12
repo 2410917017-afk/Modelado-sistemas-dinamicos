@@ -225,33 +225,35 @@ sol3 = integrar_metodo('BDF')     # ode23s
 sol4 = integrar_metodo('Radau')   # ode15s
 
 # --------------------------------------------------
-# Figura 1: comparación de los 4 métodos
+# Figura: comparación de los 4 métodos
 # --------------------------------------------------
-fig1, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True, sharey=True)
-fig1.suptitle(
+fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True, sharey=True)
+fig.suptitle(
+    f"Masa-resorte-amortiguador — Raw / Simulación  |   "
+    f"N={len(t_common)} muestras\n"
     f"Parámetros estimados — m={m_est:.4f} kg  k={k_est:.2f} N/m  "
     f"b={b_est:.4f} N·s/m\n"
-    f"ωn={wn_est:.2f} rad/s  ζ={zeta_est:.4f}  RMSE={RMSE:.4f} mm  R²={R2:.5f}",
-    fontsize=10
+    f"ωn={wn_est:.2f} rad/s  ζ={zeta_est:.4f}",#  RMSE={RMSE:.4f} mm  R²={R2:.5f}",
+    fontweight='bold', fontsize=10
 )
 
 configs = [
-    (axes[0, 0], sol1, 'red',     'RK45 (ode45)'),
-    (axes[0, 1], sol2, 'orange',  'RK23 (ode23)'),
-    (axes[1, 0], sol3, 'cyan',    'BDF  (ode23s)'),
-    (axes[1, 1], sol4, 'magenta', 'Radau (ode15s)'),
+    (axes[0, 0], sol1, 'RK45 (ode45)'),
+    (axes[0, 1], sol2, 'RK23 (ode23)'),
+    (axes[1, 0], sol3, 'BDF  (ode23s)'),
+    (axes[1, 1], sol4, 'Radau (ode15s)'),
 ]
 
-for ax, sol, color, titulo in configs:
-    ax.plot(t_common, x_exp_interp * 1000, 'b-',
-            linewidth=1.5, label='Experimental', zorder=3)
-    ax.plot(sol.t,    sol.y[0]       * 1000, color=color,
-            linewidth=1.5, linestyle='--', label=titulo, zorder=2)
+for ax, sol, titulo in configs:
+    ax.plot(t_common, x_exp_interp * 1000, 'steelblue',
+            linewidth=2, alpha=0.9, label='Raw')
+    ax.plot(sol.t,    sol.y[0]       * 1000, color='tomato',
+            linewidth=1.5, linestyle='--', label=titulo)
     ax.set_title(titulo, fontsize=10)
     ax.set_xlabel("Tiempo (s)")
     ax.set_ylabel("Posición (mm)")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.4)
 
-fig1.tight_layout()
+fig.tight_layout()
 plt.show()
