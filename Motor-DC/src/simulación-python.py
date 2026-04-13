@@ -14,7 +14,7 @@ from scipy.signal import savgol_filter
 
 # CONFIGURACIÓN
 
-PORT   = 'COM11'
+PORT   = 'COM3'
 BAUD   = 115200
 T_FIN  = 2.0   # segundos de captura
 VOLT   = 12.0  # voltaje aplicado (V)
