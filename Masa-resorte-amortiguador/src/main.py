@@ -11,13 +11,13 @@ from scipy.optimize import minimize
 # -----------------------------------------------
 m = 0.1739      # masa (kg)
 k = 750.0       # constante del resorte (N/m)
-b = 2.5         # fricción (N·s/m)
+b = 2.0         # fricción (N·s/m)
 
 # Condiciones iniciales 
-x0_manual = 0.025      # desplazamiento inicial (m)
+x0_manual = 0.15      # desplazamiento inicial (m)
 v0_manual = 0.0        # velocidad inicial (m/s)
 
-t_fin = 5.0
+t_fin = 4.0
 num_puntos = 1000
 
 contador = 0
@@ -51,7 +51,7 @@ def simular(params, t_eval, t0, tf, ci):
 y1, y2 = 100, 500
 x1, x2 = 200, 400
 mm_px  = 0.357142857
-duration = 5
+duration = 4
 
 cap = cv.VideoCapture(0)
 if not cap.isOpened():
@@ -68,12 +68,11 @@ while True:
         break
 
     T   = time.time() - T0
-    ROI = frame #frame[y1:y2, x1:x2]
+    ROI = frame[y1:y2, x1:x2]
     hsv = cv.cvtColor(ROI, cv.COLOR_BGR2HSV)
 
-    mask1 = cv.inRange(hsv, np.array([0,   100, 70]),  np.array([10,  255, 255]))
-    mask2 = cv.inRange(hsv, np.array([170, 100, 70]),  np.array([180, 255, 255]))
-    maskR = mask1 + mask2
+    maskR = cv.inRange(hsv, np.array([31,   40, 40]),  np.array([85,  255, 255]))
+
 
     contours, _ = cv.findContours(maskR, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     if contours:
@@ -83,21 +82,21 @@ while True:
         pos_mm = pos_px * mm_px
 
         if contador == 3:
-            offset = pos_mm
+           offset = pos_mm 
 
-        pos_mm = pos_mm - offset
+        pos_mm = pos_mm - offset + 15
 
         if contador> 3:
             t_vec.append(T)
             x_vec.append(pos_mm)
 
-        #cv.rectangle(ROI, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        #cv.putText(ROI, f"x={pos_mm:.2f} mm", (10, 30),
-        #           cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        cv.rectangle(ROI, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv.putText(ROI, f"x={pos_mm:.2f} mm", (10, 30),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
     contador += 1
     
-    #cv.imshow('ROI', ROI)
+    cv.imshow('ROI', ROI)
     if (cv.waitKey(1) & 0xFF == ord('q')) or (T > duration):
         break 
 
@@ -245,7 +244,7 @@ configs = [
 ]
 
 for ax, sol, titulo in configs:
-    ax.plot(t_common, x_exp_interp * 1000, 'steelblue',
+    ax.plot(t_common, (x_exp_interp * 1000) + 15, 'steelblue',
             linewidth=2, alpha=0.9, label='Raw')
     ax.plot(sol.t,    sol.y[0]       * 1000, color='tomato',
             linewidth=1.5, linestyle='--', label=titulo)
