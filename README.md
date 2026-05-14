@@ -1,4 +1,4 @@
-# 🔬 Modelado y Simulación de Sistemas Dinámicos
+#  Modelado y Simulación de Sistemas Dinámicos
 
 <div align="center">
 
@@ -14,7 +14,7 @@
 
 ---
 
-## 📋 Descripción General
+## Descripción General
 
 Este repositorio reúne una colección de prácticas orientadas al análisis, modelado y simulación de sistemas dinámicos. Cada proyecto parte de un sistema físico real, aplica fundamentos matemáticos para obtener su modelo, y emplea métodos numéricos y de estimación para validar el comportamiento simulado frente a datos experimentales o mediciones reales.
 
@@ -22,23 +22,23 @@ Las prácticas cubren desde sistemas mecánicos clásicos hasta identificación 
 
 ---
 
-## 📁 Estructura del Repositorio
+##  Estructura del Repositorio
 
 ```
-📦 modelado-sistemas-dinamicos/
-├── 📂 01_pendulo_simple/
+ modelado-sistemas-dinamicos/
+├──  01_pendulo_simple/
 │   ├── pendulo_modelo.py
 │   ├── simulacion_numerica.py
 │   ├── comparacion_metodos.py
 │   └── README.md
 │
-├── 📂 02_motor_dc/
+├──  02_motor_dc/
 │   ├── estimacion_parametros.py
 │   ├── regresion_minimos_cuadrados.py
 │   ├── simulacion_motor.py
 │   └── README.md
 │
-├── 📂 03_masa_resorte_amortiguador/
+├──  03_masa_resorte_amortiguador/
 │   ├── captura_vision_artificial.py
 │   ├── modelado_sistema.py
 │   ├── estimacion_parametros.py
@@ -51,7 +51,7 @@ Las prácticas cubren desde sistemas mecánicos clásicos hasta identificación 
 
 ---
 
-## 🧪 Prácticas
+##  Prácticas
 
 ---
 
@@ -94,7 +94,7 @@ $$\ddot{\theta} + \frac{g}{L}\theta = 0$$
 
 ---
 
-### 2. ⚡ Motor DC — Estimación de Parámetros y Simulación
+### 2.  Motor DC — Estimación de Parámetros y Simulación
 
 **Ubicación:** `02_motor_dc/`
 
@@ -129,7 +129,7 @@ Donde los parámetros a identificar son: $R$, $L$, $K_e$, $K_t$, $J$, $B$.
 
 ---
 
-### 3. 🟢 Sistema Masa-Resorte-Amortiguador — Modelado con Visión Artificial
+### 3.  Sistema Masa-Resorte-Amortiguador — Modelado con Visión Artificial
 
 **Ubicación:** `03_masa_resorte_amortiguador/`
 
@@ -171,7 +171,7 @@ Identificación paramétrica → Modelo validado → Simulación
 
 ---
 
-## 🛠️ Tecnologías y Dependencias
+## Tecnologías y Dependencias
 
 ```txt
 numpy          # Álgebra lineal y operaciones numéricas
@@ -189,7 +189,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🚀 Cómo Ejecutar
+##  Cómo Ejecutar
 
 ```bash
 # Clonar el repositorio
@@ -238,7 +238,7 @@ Cada práctica genera automáticamente:
 
 ---
 
-## 📄 Licencia
+##  Licencia
 
 Este repositorio es de uso académico y educativo. Consultar el archivo `LICENSE` para más detalles.
 
