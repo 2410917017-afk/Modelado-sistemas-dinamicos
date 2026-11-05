@@ -55,7 +55,7 @@ Las prácticas cubren desde sistemas mecánicos clásicos hasta identificación 
 
 ---
 
-### 1. 🔵 Péndulo Simple — Modelado y Simulación Numérica
+### 1. Péndulo Simple — Modelado y Simulación Numérica
 
 **Ubicación:** `01_pendulo_simple/`
 
@@ -214,19 +214,19 @@ python captura_vision_artificial.py
 
 ---
 
-## 📊 Resultados y Visualizaciones
+##  Resultados y Visualizaciones
 
 Cada práctica genera automáticamente:
 
-- 📈 Gráficas de respuesta temporal del sistema
-- 🔄 Diagramas de espacio de fase
-- 📉 Comparativas de error entre métodos
-- 🎯 Gráficas de ajuste del modelo vs. datos experimentales
-- 📋 Reporte de parámetros identificados con métricas de bondad de ajuste ($R^2$, RMSE)
+-  Gráficas de respuesta temporal del sistema
+-  Diagramas de espacio de fase
+-  Comparativas de error entre métodos
+-  Gráficas de ajuste del modelo vs. datos experimentales
+-  Reporte de parámetros identificados con métricas de bondad de ajuste ($R^2$, RMSE)
 
 ---
 
-## 📚 Fundamentos Teóricos
+##  Fundamentos Teóricos
 
 | Área | Temas |
 |---|---|
